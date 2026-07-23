@@ -1,0 +1,38 @@
+# paperLeo — docker-compose.yml
+# Dokumentation: https://github.com/STL2020/paperleo
+#
+# Schnellstart:
+#   docker compose up -d
+#   → http://localhost:5080
+#
+# Das ./data-Volume enthält alle Einstellungen (settings.env) und das
+# Aktivitätslog (activity.jsonl). Sichere dieses Verzeichnis regelmäßig.
+
+services:
+  paperleo:
+    image: ghcr.io/stl2020/paperleo:latest
+    container_name: paperleo
+    ports:
+      - "5080:8080"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      # Optional: Pfade überschreiben (Standard: /app/data/settings.env)
+      # - ConfigPath=/app/data/settings.env
+      # - ActivityLogPath=/app/data/activity.jsonl
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+# Alternativ: Zusammen mit Paperless-ngx im selben Netzwerk
+# Dann als Webhook-URL: http://paperleo:8080/api/webhook/document
+#
+# networks:
+#   paperless_network:
+#     external: true
+#     name: paperless-ngx_default

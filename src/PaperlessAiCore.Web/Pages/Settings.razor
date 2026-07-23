@@ -1,0 +1,1884 @@
+@using PaperlessAiCore.Web.Services
+@page "/settings"
+@inject ApiClient Api
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<div class="settings-page">
+
+    @if (_loading)
+    {
+        <div style="display:flex;align-items:center;gap:10px;padding:40px 24px;color:var(--muted);">
+            <div class="loading-spinner"></div> Einstellungen werden geladen …
+        </div>
+    }
+    else if (_loadError is not null)
+    {
+        <div style="padding:24px;">
+            <div style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:10px;padding:16px;">
+                <p style="font-size:13px;font-weight:500;color:#ef4444;margin:0 0 4px;">Fehler beim Laden</p>
+                <p style="font-size:12px;color:var(--muted);margin:0 0 12px;">@_loadError</p>
+                <button class="btn secondary" @onclick="Retry">Erneut versuchen</button>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="settings-content">
+
+                @if (SettingsTabState.ActiveTab == "Verbindung & KI")
+                {
+                    <div class="sgroup">
+                        <p class="stitle">Paperless-ngx</p>
+                        <div class="sbox">
+                            <div class="sfield"><label>Paperless-URL</label><input @bind="_settings.PaperlessUrl" placeholder="http://192.168.1.10:8000" /></div>
+                            <div class="sfield"><label>API-Token</label><input @bind="_settings.PaperlessApiToken" type="password" placeholder="Mein Profil → API-Token" /></div>
+                            <div class="sfield"><label>Verarbeitungs-Tag</label><input @bind="_settings.ProcessedTagName" placeholder="Klaus" /></div>
+                            <div class="saction">
+                                <button class="btn secondary !py-1.5 !text-sm" @onclick="TestPaperless" disabled="@_testingPaperless">@(_testingPaperless ? "Teste …" : "Verbindung testen")</button>
+                                @if (_paperlessTestResult is not null)
+                                {
+                                    <span class="badge @(_paperlessTestResult.Success ? "ok" : "error")">@_paperlessTestResult.Message @if (_paperlessTestResult.DocumentCount is not null) { <text>(@_paperlessTestResult.DocumentCount Dok.)</text> }</span>
+                                }
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="sgroup">
+                        <p class="stitle">KI-Provider</p>
+                        <div class="sbox">
+                            <div class="sfield">
+                                <label>Schnellauswahl</label>
+                                <div style="display:flex;flex-wrap:wrap;gap:6px;">
+                                    @foreach (var p in _providers)
+                                    {
+                                        <button type="button" class="preset-btn @(p.Key == _activeProvider ? "active" : "")"
+                                                @onclick="() => ApplyPreset(p.Key)"
+                                                title="@p.ApiBase">
+                                            @((MarkupString)p.Icon) @p.Label
+                                        </button>
+                                    }
+                                </div>
+                            </div>
+                            <div class="two-col">
+                                <div class="sfield"><label>Modell</label><input @bind="_settings.LlmModel" placeholder="gemini-2.5-flash" /></div>
+                                <div class="sfield"><label>API-Key</label><input @bind="_settings.LlmApiKey" type="password" placeholder="sk-…" /></div>
+                                <div class="sfield"><label>API-Base-URL (optional)</label><input @bind="_settings.LlmApiBase" placeholder="leer = api.openai.com" /></div>
+                                <div class="sfield"><label>Max. Tokens</label><input type="number" min="256" step="256" @bind="_settings.LlmMaxTokens" /></div>
+                            </div>
+                            <div class="saction">
+                                <button class="btn secondary !py-1.5 !text-sm" @onclick="TestLlm" disabled="@_testingLlm">@(_testingLlm ? "Teste …" : "KI-Verbindung testen")</button>
+                                @if (_llmTestResult is not null)
+                                {
+                                    <span class="badge @(_llmTestResult.Success ? "ok" : "error")">@_llmTestResult.Message</span>
+                                }
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="sgroup">
+                        <p class="stitle">Webhook (optional)</p>
+                        <div class="sbox">
+                            <p class="shint mb-2">Paperless: Workflows → Trigger "Dokument hinzugefügt" → Webhook, Parameter <code>url</code> = <code>{doc_url}</code></p>
+                            <input readonly value="@WebhookUrl" onclick="this.select()" style="width:100%;font-family:monospace;font-size:12px;" />
+                        </div>
+                    </div>
+
+                    <div class="sgroup">
+                        <p class="stitle">Lizenz</p>
+                        <div class="sbox">
+                            <div class="sfield">
+                                <label>Lizenzschlüssel</label>
+                                <input @bind="_settings.PremiumLicenseKey" placeholder="PAIC-XXXXXXXX-CCCC" style="font-family:monospace;" />
+                                <p class="shint">Leer = Demo-Version (50 Dokumente). Vollversion: unbegrenzt + alle KI-Funktionen.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="save-row">
+                        <button class="btn" @onclick="Save" disabled="@_saving">@(_saving ? "Speichert …" : "Speichern")</button>
+                        @if (_savedMessage is not null) { <span class="badge ok">@_savedMessage</span> }
+                    </div>
+                }
+
+                @if (SettingsTabState.ActiveTab == "Verhalten")
+                {
+                    <div class="sgroup">
+                        <p class="stitle">Auto-Modus</p>
+                        <div class="sbox">
+                            <div class="toggle-row"><div><div class="text-sm font-medium">Auto-Modus aktivieren</div><div class="shint">Scannt automatisch neue Dokumente.</div></div><input type="checkbox" @bind="_settings.AutoModeEnabled" /></div>
+                            <div class="sfield mt-3"><label>Scan-Intervall (Sekunden)</label><input type="number" min="30" step="30" @bind="_settings.PollIntervalSeconds" style="width:120px;" /></div>
+                        </div>
+                    </div>
+
+                    <div class="sgroup">
+                        <p class="stitle">KI-Funktionen</p>
+                        <div class="sbox">
+                            <div class="toggle-row"><span class="text-sm">Tags vergeben</span><input type="checkbox" @bind="_settings.EnableTagsAssignment" /></div>
+                            <div class="toggle-row"><span class="text-sm">Korrespondent erkennen</span><input type="checkbox" @bind="_settings.EnableCorrespondentDetection" /></div>
+                            <div class="toggle-row"><span class="text-sm">Dokumenttyp klassifizieren</span><input type="checkbox" @bind="_settings.EnableDocumentTypeClassification" /></div>
+                            <div class="toggle-row"><span class="text-sm">Titel generieren</span><input type="checkbox" @bind="_settings.EnableTitleGeneration" /></div>
+                            <div class="toggle-row @(!_proMode ? "opacity-50" : "")">
+                                <span class="text-sm">Custom Fields befüllen @(!_proMode ? "· Vollversion" : "")</span>
+                                <input type="checkbox" @bind="_settings.EnableCustomFields" disabled="@(!_proMode)" />
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="sgroup">
+                        <p class="stitle">Einschränkungen</p>
+                        <div class="sbox">
+                            <div class="toggle-row"><span class="text-sm">Nur vorhandene Korrespondenten</span><input type="checkbox" @bind="_settings.UseExistingCorrespondentsOnly" /></div>
+                            <div class="toggle-row"><span class="text-sm">Nur vorhandene Dokumenttypen</span><input type="checkbox" @bind="_settings.UseExistingDocumentTypesOnly" /></div>
+                            <div class="toggle-row"><span class="text-sm">Nur vorhandene Tags</span><input type="checkbox" @bind="_settings.UseExistingTagsOnly" /></div>
+                        </div>
+                    </div>
+
+                    <div class="sgroup">
+                        <p class="stitle">🧪 Dokument testen</p>
+                        <div class="sbox !p-0 overflow-hidden" style="min-height:480px;">
+                            <TestProcessing />
+                        </div>
+                    </div>
+
+                    <div class="save-row">
+                        <button class="btn" @onclick="Save" disabled="@_saving">@(_saving ? "Speichert …" : "Speichern")</button>
+                        @if (_savedMessage is not null) { <span class="badge ok">@_savedMessage</span> }
+                    </div>
+                }
+
+                @if (SettingsTabState.ActiveTab == "Vokabular")
+                {
+                    <div class="sgroup">
+                        <p class="stitle">Tag-Vokabular</p>
+                        <div class="sbox">
+                            @if (!_proMode) { <div class="demo-hint">🔒 Community: Vokabular auf 5 Standard-Tags beschränkt. <strong>Pro</strong> = eigenes Vokabular, Import aus Paperless, KI-Vorschläge.</div> }
+                            <div class="sfield"><label>Vokabular (Komma-getrennt)</label><textarea @bind="_settings.DefaultTagVocabulary" rows="3" disabled="@(!_proMode)" placeholder="z.B. Strom, Wasser, Mietobjekt A, Max …"></textarea></div>
+                            <div class="saction">
+                                <button class="btn secondary !py-1.5 !text-sm" @onclick="SuggestTags" disabled="@(_suggestingTags || !_proMode)" title="@(!_proMode ? "Nur in Pro verfügbar" : "KI analysiert deine letzten Dokumente und schlägt passende Tags vor")">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:14px;height:14px;" aria-hidden="true"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>
+                                    @(_suggestingTags ? "Analysiere …" : "KI-Vorschlag")
+                                </button>
+                                <button class="btn secondary !py-1.5 !text-sm" @onclick="ImportTagsFromPaperless" disabled="@(_importingTagsFromPaperless || !_proMode)" title="@(!_proMode ? "Nur in Pro verfügbar" : "Bestehende Tags aus Paperless ins Vokabular importieren")">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:14px;height:14px;" aria-hidden="true"><polyline points="8 17 12 21 16 17"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29"/></svg>
+                                    @(_importingTagsFromPaperless ? "Importiere …" : "Aus Paperless importieren")
+                                </button>
+                                <button class="btn secondary !py-1.5 !text-sm" @onclick="SeedTags" disabled="@(_seedingTags || !_proMode)" title="@(!_proMode ? "Nur in Pro verfügbar" : "Vokabular als neue Tags in Paperless anlegen")">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:14px;height:14px;" aria-hidden="true"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+                                    @(_seedingTags ? "Lege an …" : "In Paperless anlegen")
+                                </button>
+                            </div>
+                            @if (_seedTagsResult is not null) { <div class="mt-2"><span class="badge ok">@(_seedTagsResult.CreatedCount) angelegt, @(_seedTagsResult.AlreadyExistedCount) vorhanden</span></div> }
+                        </div>
+                    </div>
+
+                    <div class="sgroup">
+                        <p class="stitle">Dokumenttyp-Vokabular</p>
+                        <div class="sbox">
+                            @if (!_proMode) { <div class="demo-hint">🔒 Community: Vokabular auf 5 Standard-Typen beschränkt. <strong>Pro</strong> = eigenes Vokabular, Import aus Paperless, KI-Vorschläge.</div> }
+                            <div class="sfield"><label>Vokabular (Komma-getrennt)</label><textarea @bind="_settings.DefaultDocumentTypeVocabulary" rows="3" disabled="@(!_proMode)" placeholder="z.B. Rechnung, Vertrag, Mahnung …"></textarea></div>
+                            <div class="saction">
+                                <button class="btn secondary !py-1.5 !text-sm" @onclick="SuggestDocumentTypes" disabled="@(_suggestingDocTypes || !_proMode)" title="@(!_proMode ? "Nur in Pro verfügbar" : "KI analysiert deine letzten Dokumente und schlägt passende Typen vor")">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:14px;height:14px;" aria-hidden="true"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>
+                                    @(_suggestingDocTypes ? "Analysiere …" : "KI-Vorschlag")
+                                </button>
+                                <button class="btn secondary !py-1.5 !text-sm" @onclick="ImportDocTypesFromPaperless" disabled="@(_importingDocTypesFromPaperless || !_proMode)" title="@(!_proMode ? "Nur in Pro verfügbar" : "Bestehende Dokumenttypen aus Paperless ins Vokabular importieren")">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:14px;height:14px;" aria-hidden="true"><polyline points="8 17 12 21 16 17"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29"/></svg>
+                                    @(_importingDocTypesFromPaperless ? "Importiere …" : "Aus Paperless importieren")
+                                </button>
+                                <button class="btn secondary !py-1.5 !text-sm" @onclick="SeedDocumentTypes" disabled="@(_seedingDocTypes || !_proMode)" title="@(!_proMode ? "Nur in Pro verfügbar" : "Vokabular als neue Dokumenttypen in Paperless anlegen")">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:14px;height:14px;" aria-hidden="true"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+                                    @(_seedingDocTypes ? "Lege an …" : "In Paperless anlegen")
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="save-row">
+                        <button class="btn" @onclick="Save" disabled="@_saving">@(_saving ? "Speichert …" : "Speichern")</button>
+                        @if (_savedMessage is not null) { <span class="badge ok">@_savedMessage</span> }
+                    </div>
+                }
+
+                @if (SettingsTabState.ActiveTab == "Korrespondenten")
+                {
+                    <div class="sgroup">
+                        <p class="stitle">Korrespondenten</p>
+                        <div class="sbox">
+                            <p class="shint">Korrespondenten werden automatisch aus Dokumenten erkannt und in Paperless angelegt. Duplikat-Erkennung folgt in einer kommenden Version.</p>
+                        </div>
+                    </div>
+                }
+
+                @if (SettingsTabState.ActiveTab == "Prompt-Assistent")
+                {
+                    <div class="sgroup">
+                        <p class="stitle">Schritt @_promptStep von 7 — @_promptStepLabel</p>
+                        <div class="sbox" style="min-height:300px;">
+
+                            @if (_promptStep == 1)
+                            {
+                                <!-- SCHRITT 1: SETUP-CHECK -->
+                                <div style="margin-bottom:12px;">
+                                    <p style="font-size:13px;color:var(--text);margin:0 0 6px;">paperLeo benötigt 13 Standard-Felder für den vollen Funktionsumfang.</p>
+                                    <p style="font-size:12px;color:var(--muted);margin:0 0 12px;">Fehlende Felder werden automatisch in Paperless angelegt — bestehende Daten bleiben erhalten.</p>
+                                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+                                        <div style="flex:1;height:6px;background:var(--border);border-radius:999px;overflow:hidden;">
+                                            <div style="width:@(SetupPct)%;height:100%;background:var(--accent);border-radius:999px;transition:width .4s;"></div>
+                                        </div>
+                                        <span style="font-size:13px;font-weight:500;color:var(--accent);white-space:nowrap;">@SetupFound / 13</span>
+                                    </div>
+                                    @if (SetupMissing.Any())
+                                    {
+                                        <div style="background:rgba(29,158,117,.05);border:1px solid rgba(29,158,117,.15);border-radius:8px;padding:10px 12px;margin-bottom:10px;">
+                                            <p style="font-size:12px;font-weight:500;color:var(--accent);margin:0 0 6px;">Fehlende Felder (@SetupMissing.Count):</p>
+                                            <div style="display:flex;flex-wrap:wrap;gap:5px;">
+                                                @foreach (var f in SetupMissing)
+                                                { <span style="font-size:11px;padding:2px 8px;border-radius:999px;background:rgba(239,68,68,.08);color:#ef4444;border:1px solid rgba(239,68,68,.2);">@f</span> }
+                                            </div>
+                                        </div>
+                                        <button class="btn !py-1.5 !text-sm" @onclick="CreateMissingFieldsAsync" disabled="@_creatingMissingFields">
+                                            @if (_creatingMissingFields) { <div class="loading-spinner" style="width:13px;height:13px;border-width:2px;margin:0;"></div> }
+                                            @(_creatingMissingFields ? "Lege Felder an …" : $"{SetupMissing.Count} fehlende Felder jetzt anlegen")
+                                        </button>
+                                    }
+                                    else
+                                    {
+                                        <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:rgba(29,158,117,.05);border:1px solid rgba(29,158,117,.15);border-radius:8px;">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" style="width:16px;height:16px;flex-shrink:0;" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+                                            <span style="font-size:13px;color:var(--accent);">Alle 13 Standard-Felder vorhanden — bereit für den Assistenten.</span>
+                                        </div>
+                                    }
+                                    @if (!string.IsNullOrEmpty(_setupMessage)) { <p class="shint mt-2" style="color:var(--accent);">@_setupMessage</p> }
+                                </div>
+                            }
+                            else if (_promptStep == 2)
+                            {
+                                <!-- SCHRITT 2: PERSONEN -->
+                                <p class="shint mb-3">Wer taucht in Dokumenten auf? Vornamen genügen — für das Feld „Familienmitglied".</p>
+                                <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px;">
+                                    @foreach (var p in _assistPersons)
+                                    {
+                                        <div style="display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 12px;">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.8" style="width:16px;height:16px;flex-shrink:0;" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                                            <input value="@p.Name" @oninput='e => UpdatePersonName(_assistPersons.IndexOf(p), e.Value?.ToString() ?? string.Empty)' placeholder="Vorname" style="flex:1;font-size:13px;" />
+                                            <select value="@p.Role" @onchange='e => UpdatePersonRole(_assistPersons.IndexOf(p), e.Value?.ToString() ?? "Hauptnutzer")' style="font-size:12px;width:auto;">
+                                                <option>Hauptnutzer</option>
+                                                <option>Partner/in</option>
+                                                <option>Kind</option>
+                                                <option>Elternteil</option>
+                                                <option>Mitarbeiter</option>
+                                                <option>Gesellschafter</option>
+                                            </select>
+                                            <button @onclick='() => _assistPersons.Remove(p)' style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:16px;padding:0 4px;" title="Entfernen">×</button>
+                                        </div>
+                                    }
+                                </div>
+                                <button class="btn secondary !py-1.5 !text-sm" @onclick="AddPerson">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                    Person hinzufügen
+                                </button>
+                            }
+                            else if (_promptStep == 3)
+                            {
+                                <!-- SCHRITT 3: ADRESSEN -->
+                                <p class="shint mb-3">Adressen bestimmen ob ein Dokument zum Mietobjekt gehört und ob Kosten steuerrelevant sind.</p>
+                                <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px;">
+                                    @foreach (var a in _assistAddresses)
+                                    {
+                                        <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;">
+                                            <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="@(a.IsMietobjekt ? "#f59e0b" : "var(--accent)")" stroke-width="1.8" style="width:16px;height:16px;flex-shrink:0;" aria-hidden="true"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+                                                <input value="@a.Kurzname" @oninput='e => UpdateAddressKurzname(_assistAddresses.IndexOf(a), e.Value?.ToString() ?? string.Empty)' placeholder="Kurzname (z.B. Zuhause)" style="flex:1;font-size:13px;" />
+                                                <select value='@(a.IsMietobjekt ? "Mietobjekt" : "Privatadresse")' @onchange='e => UpdateAddressType(_assistAddresses.IndexOf(a), e.Value?.ToString())' style="font-size:12px;width:auto;">
+                                                    <option>Privatadresse</option>
+                                                    <option>Mietobjekt</option>
+                                                    <option>Zweitwohnung</option>
+                                                    <option>Büro/Gewerbe</option>
+                                                </select>
+                                                <button @onclick='() => _assistAddresses.Remove(a)' style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:16px;padding:0 4px;" title="Entfernen">×</button>
+                                            </div>
+                                            <input value="@a.Adresse" @oninput='e => UpdateAddressAdresse(_assistAddresses.IndexOf(a), e.Value?.ToString() ?? string.Empty)' placeholder="Vollständige Adresse (z.B. Musterstr. 1, 12345 Stadt)" style="width:100%;font-size:12px;" />
+                                        </div>
+                                    }
+                                </div>
+                                <button class="btn secondary !py-1.5 !text-sm" @onclick="AddAddress">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                    Adresse hinzufügen
+                                </button>
+                            }
+                            else if (_promptStep == 4)
+                            {
+                                <!-- SCHRITT 4: FAHRZEUGE -->
+                                <p class="shint mb-3">Fahrzeuge für Kfz-Steuer, TÜV, Versicherung und Leasing-Erkennung.</p>
+                                <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px;">
+                                    @foreach (var v in _assistVehicles)
+                                    {
+                                        <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;">
+                                            <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.8" style="width:16px;height:16px;flex-shrink:0;" aria-hidden="true"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+                                                <input value="@v.Modell" @oninput='e => UpdateVehicleModell(_assistVehicles.IndexOf(v), e.Value?.ToString() ?? string.Empty)' placeholder="Marke / Modell (z.B. VW Golf)" style="flex:1;font-size:13px;" />
+                                                <button @onclick='() => _assistVehicles.Remove(v)' style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:16px;padding:0 4px;" title="Entfernen">×</button>
+                                            </div>
+                                            <div style="display:flex;gap:8px;">
+                                                <input value="@v.Kennzeichen" @oninput='e => UpdateVehicleKennzeichen(_assistVehicles.IndexOf(v), e.Value?.ToString() ?? string.Empty)' placeholder="Kennzeichen (z.B. BN-AB-1234)" style="flex:1;font-size:12px;" />
+                                                <label style="display:flex;align-items:center;gap:5px;font-size:12px;white-space:nowrap;cursor:pointer;">
+                                                    <input type="checkbox" checked="@v.IsLeasing" @onchange='e => UpdateVehicleLeasing(_assistVehicles.IndexOf(v), (bool)(e.Value ?? false))' />
+                                                    Leasing
+                                                </label>
+                                            </div>
+                                        </div>
+                                    }
+                                </div>
+                                <button class="btn secondary !py-1.5 !text-sm" @onclick="AddVehicle">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                    Fahrzeug hinzufügen
+                                </button>
+                                @if (!_assistVehicles.Any())
+                                {
+                                    <p class="shint mt-2">Keine Fahrzeuge — Kfz-Dokumente werden trotzdem erkannt, aber ohne Kennzeichen-Zuordnung.</p>
+                                }
+                            }
+                            else if (_promptStep == 5)
+                            {
+                                <!-- SCHRITT 5: STEUER (regelbasiert) -->
+                                <p class="shint mb-3">Diese Auswahl erzeugt konkrete IF-THEN-Regeln im Prompt — nicht nur Kategorien.</p>
+                                <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px;">
+                                    <label style="display:flex;align-items:flex-start;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;cursor:pointer;">
+                                        <input type="checkbox" @bind="_taxHandwerker" style="margin-top:2px;" />
+                                        <div><div style="font-size:12px;font-weight:500;">Handwerker / §35a</div><div style="font-size:11px;color:var(--muted);">Rechnungen von Handwerkern im Privathaushalt</div></div>
+                                    </label>
+                                    <label style="display:flex;align-items:flex-start;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;cursor:pointer;">
+                                        <input type="checkbox" @bind="_taxWerbungskosten" style="margin-top:2px;" />
+                                        <div><div style="font-size:12px;font-weight:500;">Werbungskosten</div><div style="font-size:11px;color:var(--muted);">Arbeitsmittel, Homeoffice, Fortbildung</div></div>
+                                    </label>
+                                    <label style="display:flex;align-items:flex-start;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;cursor:pointer;">
+                                        <input type="checkbox" @bind="_taxVermietung" style="margin-top:2px;" />
+                                        <div><div style="font-size:12px;font-weight:500;">Vermietungskosten</div><div style="font-size:11px;color:var(--muted);">Kosten und Einnahmen Mietobjekte</div></div>
+                                    </label>
+                                    <label style="display:flex;align-items:flex-start;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;cursor:pointer;">
+                                        <input type="checkbox" @bind="_taxVersicherung" style="margin-top:2px;" />
+                                        <div><div style="font-size:12px;font-weight:500;">Versicherungen</div><div style="font-size:11px;color:var(--muted);">Kranken-, Lebens-, Rentenversicherung</div></div>
+                                    </label>
+                                    <label style="display:flex;align-items:flex-start;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;cursor:pointer;">
+                                        <input type="checkbox" @bind="_taxSpenden" style="margin-top:2px;" />
+                                        <div><div style="font-size:12px;font-weight:500;">Spenden</div><div style="font-size:11px;color:var(--muted);">Zuwendungsbestätigungen</div></div>
+                                    </label>
+                                    <label style="display:flex;align-items:flex-start;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;cursor:pointer;">
+                                        <input type="checkbox" @bind="_taxKirche" style="margin-top:2px;" />
+                                        <div><div style="font-size:12px;font-weight:500;">Kirchensteuer</div><div style="font-size:11px;color:var(--muted);">Kirchensteuerbescheide</div></div>
+                                    </label>
+                                </div>
+                                <div style="padding:8px 12px;background:rgba(29,158,117,.06);border-radius:8px;border:1px solid rgba(29,158,117,.15);font-size:11px;color:var(--muted);">
+                                    <strong style="color:var(--accent);">Generierte Regel:</strong> Steuer = ja WENN: @(BuildTaxRulePreview())
+                                </div>
+                                <div style="margin-top:10px;" class="sfield">
+                                    <label>Währung (für Rechnungsbetrag-Feld)</label>
+                                    <select @bind="_promptCurrency" style="width:auto;">
+                                        <option value="EUR">EUR – Euro</option>
+                                        <option value="CHF">CHF – Schweizer Franken</option>
+                                        <option value="USD">USD – US-Dollar</option>
+                                        <option value="GBP">GBP – Britisches Pfund</option>
+                                    </select>
+                                </div>
+                            }
+                            else if (_promptStep == 6)
+                            {
+                                <!-- SCHRITT 6: KORRESPONDENTEN & BEHÖRDEN -->
+                                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                                    <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px;">
+                                        <p style="font-size:12px;font-weight:500;margin:0 0 4px;">Vertragstypen</p>
+                                        <p style="font-size:11px;color:var(--muted);margin:0 0 8px;">Verbessert Erkennung von Laufzeiten</p>
+                                        <div style="display:flex;flex-direction:column;gap:5px;">
+                                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" @bind="_vtStrom" /> Strom / Gas</label>
+                                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" @bind="_vtInternet" /> Internet / Telefon</label>
+                                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" @bind="_vtVers" /> Versicherungen</label>
+                                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" @bind="_vtKV" /> Krankenversicherung</label>
+                                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" @bind="_vtMiete" /> Mietverträge</label>
+                                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" @bind="_vtLeasing" /> Leasing / Kredit</label>
+                                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" @bind="_vtAlters" /> Altersvorsorge</label>
+                                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" @bind="_vtWartung" /> Wartungsverträge</label>
+                                        </div>
+                                    </div>
+                                    <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px;">
+                                        <p style="font-size:12px;font-weight:500;margin:0 0 4px;">Behörden</p>
+                                        <p style="font-size:11px;color:var(--muted);margin:0 0 8px;">Verbessert Korrespondenten-Erkennung</p>
+                                        <div style="display:flex;flex-direction:column;gap:5px;">
+                                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" @bind="_bhFinanz" /> Finanzamt</label>
+                                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" @bind="_bhKK" /> Krankenkasse</label>
+                                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" @bind="_bhRente" /> Rentenversicherung</label>
+                                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" @bind="_bhStadt" /> Stadtverwaltung</label>
+                                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" @bind="_bhGericht" /> Gericht / Notar</label>
+                                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" @bind="_bhIHK" /> Handwerkskammer / IHK</label>
+                                        </div>
+                                        <div style="margin-top:8px;" class="sfield">
+                                            <label>Weitere Dienstleister (optional)</label>
+                                            <input @bind="_bhDienstleister" placeholder="z.B. Hausarzt, Steuerberater" style="font-size:12px;" />
+                                        </div>
+                                    </div>
+                                </div>
+                            }
+                            else if (_promptStep == 7)
+                            {
+                                <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:12px;">
+                                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                                        <span style="font-size:13px;font-weight:500;">Prompt-Qualität</span>
+                                        <span style="font-size:14px;font-weight:600;color:var(--accent);">@(QScorePct)%</span>
+                                    </div>
+                                    <div style="height:6px;background:var(--border);border-radius:999px;overflow:hidden;margin-bottom:12px;">
+                                        <div style="width:@(QScorePct)%;height:100%;background:var(--accent);border-radius:999px;transition:width .4s;"></div>
+                                    </div>
+                                    <div style="display:flex;flex-direction:column;gap:5px;">
+                                        <div style="display:flex;align-items:center;gap:8px;font-size:12px;">
+                                            @if (QPersons) { <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" style="width:13px;height:13px;flex-shrink:0;"><polyline points="20 6 9 17 4 12"/></svg> } else { <svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" style="width:13px;height:13px;flex-shrink:0;"><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> }
+                                            <span style="color:@(QPersons ? "var(--text)" : "#f59e0b");">@(_assistPersons.Count) @(QPersons ? "Personen definiert" : "Personen fehlen — Familienmitglied-Feld ungenauer")</span>
+                                        </div>
+                                        <div style="display:flex;align-items:center;gap:8px;font-size:12px;">
+                                            @if (QAddresses) { <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" style="width:13px;height:13px;flex-shrink:0;"><polyline points="20 6 9 17 4 12"/></svg> } else { <svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" style="width:13px;height:13px;flex-shrink:0;"><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> }
+                                            <span style="color:@(QAddresses ? "var(--text)" : "#f59e0b");">@(_assistAddresses.Count) @(QAddresses ? "Adressen definiert" : "Adressen fehlen — Mietobjekt-Erkennung deaktiviert")</span>
+                                        </div>
+                                        <div style="display:flex;align-items:center;gap:8px;font-size:12px;">
+                                            @if (QTax) { <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" style="width:13px;height:13px;flex-shrink:0;"><polyline points="20 6 9 17 4 12"/></svg> } else { <svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" style="width:13px;height:13px;flex-shrink:0;"><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> }
+                                            <span style="color:@(QTax ? "var(--text)" : "#f59e0b");">@(QTax ? "Steuerregeln definiert" : "Keine Steuerregeln — Steuer-Feld wird nie gesetzt")</span>
+                                        </div>
+                                        <div style="display:flex;align-items:center;gap:8px;font-size:12px;">
+                                            @if (QCF) { <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" style="width:13px;height:13px;flex-shrink:0;"><polyline points="20 6 9 17 4 12"/></svg> } else { <svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" style="width:13px;height:13px;flex-shrink:0;"><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> }
+                                            <span style="color:@(QCF ? "var(--text)" : "#f59e0b");">Custom Fields: @(_cfNames.Count)/13 @(QCF ? "" : "— Schritt 1 erneut aufrufen")</span>
+                                        </div>
+                                        @if (_assistVehicles.Any())
+                                        {
+                                            <div style="display:flex;align-items:center;gap:8px;font-size:12px;">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" style="width:13px;height:13px;flex-shrink:0;"><polyline points="20 6 9 17 4 12"/></svg>
+                                                <span>@(_assistVehicles.Count) Fahrzeug(e) definiert</span>
+                                            </div>
+                                        }
+                                    </div>
+                                </div>
+                                <p class="shint mb-2">Generierter Prompt — jetzt speichern oder noch anpassen:</p>
+                                <textarea @bind="_generatedPrompt" rows="10" style="font-family:monospace;font-size:11px;width:100%;"></textarea>
+                                <div class="saction" style="margin-top:10px;">
+                                    <button class="btn" @onclick="SaveGeneratedPrompt">Prompt speichern und aktivieren</button>
+                                    <button class="btn secondary" @onclick="() => _promptStep = 1">Von vorne</button>
+                                </div>
+                                @if (_promptSaved) { <p class="shint" style="color:var(--accent);margin-top:6px;">Prompt gespeichert und aktiv.</p> }
+                            }
+
+                        </div>
+                    </div>
+
+                    <div class="save-row">
+                        @if (_promptStep > 1)
+                        {
+                            <button class="btn secondary !py-1.5 !text-sm" @onclick="() => _promptStep--">← Zurück</button>
+                        }
+                        @if (_promptStep < 7)
+                        {
+                            <button class="btn !py-1.5 !text-sm" @onclick="AdvancePromptStep">Weiter →</button>
+                        }
+                        <span style="font-size:11px;color:var(--muted);margin-left:auto;">Schritt @_promptStep von 7</span>
+                    </div>
+
+                    <div class="sgroup" style="margin-top:8px;">
+                        <p class="stitle">System-Prompt (direkte Bearbeitung)</p>
+                        <div class="sbox">
+                            @if (_promptContainsPersonalData)
+                            {
+                                <div class="warn-hint" style="display:flex;align-items:center;gap:6px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:14px;height:14px;flex-shrink:0;" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> Prompt enthält ggf. persönliche Daten. <button class="btn secondary !py-0.5 !px-2 !text-xs ml-2" @onclick="ClearPersonalData">Leeren</button></div>
+                            }
+                            <p class="shint mb-2">Leer = Standard-Prompt. Platzhalter: <code>[tags]</code>, <code>[document_types]</code>.</p>
+                            <textarea @bind="_settings.CustomSystemPrompt" rows="8" style="font-family:monospace;font-size:12px;width:100%;"
+                                      placeholder="Leer lassen für Standard. Oder via Assistent oben generieren."></textarea>
+                            <div class="save-row" style="margin-top:8px;">
+                                <button class="btn" @onclick="Save" disabled="@_saving">@(_saving ? "Speichert …" : "Prompt speichern")</button>
+                                @if (_savedMessage is not null) { <span class="badge ok">@_savedMessage</span> }
+                            </div>
+                        </div>
+                    </div>
+                }
+
+
+                @if (SettingsTabState.ActiveTab == "Löschaktionen")
+                {
+                    <!-- SICHER: Batch-Operationen -->
+                    <div class="sgroup">
+                        <p class="stitle">Batch-Operationen</p>
+
+                        <!-- Batch zurücksetzen -->
+                        <div class="sbox" style="margin-bottom:10px;">
+                            <div style="display:flex;align-items:flex-start;gap:12px;">
+                                <div style="padding:8px;background:rgba(29,158,117,.1);border-radius:8px;flex-shrink:0;">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.8" style="width:18px;height:18px;" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                                </div>
+                                <div style="flex:1;">
+                                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+                                        <span style="font-size:13px;font-weight:500;">Batch zurücksetzen</span>
+                                        <span style="font-size:10px;padding:1px 7px;border-radius:999px;background:rgba(29,158,117,.1);color:var(--accent);border:1px solid rgba(29,158,117,.2);">Kein Datenverlust</span>
+                                    </div>
+                                    <p style="font-size:12px;color:var(--muted);margin:0 0 6px;">Entfernt den KI-Verarbeitungs-Tag von allen Dokumenten. paperLeo verarbeitet beim nächsten Scan alle Dokumente erneut.</p>
+                                    <p style="font-size:11px;color:var(--muted);margin:0 0 8px;"><strong style="color:var(--text);">Wann sinnvoll:</strong> Nach einer Prompt-Änderung, neuen Regeln oder wenn du alle Dokumente neu klassifizieren möchtest.</p>
+                                    <button class="btn secondary !py-1.5 !text-sm" disabled="@_resetting" @onclick="() => _confirmResetIndex?.Show()">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                                        @(_resetting ? "Setze zurück …" : "Batch zurücksetzen")
+                                    </button>
+                                    @if (_resetResult is not null) { <span class="badge @(_resetResult.Success ? "ok" : "error") ml-2">@(_resetResult.Success ? $"{_resetResult.ResetCount} Dokumente zurückgesetzt" : _resetResult.Message)</span> }
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Custom Fields nachpflegen -->
+                        <div class="sbox">
+                            <div style="display:flex;align-items:flex-start;gap:12px;">
+                                <div style="padding:8px;background:rgba(99,102,241,.1);border-radius:8px;flex-shrink:0;">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="1.8" style="width:18px;height:18px;" aria-hidden="true"><path d="M12 6V4m0 2a2 2 0 1 0 0 4m0-4a2 2 0 1 1 0 4m-6 8a2 2 0 1 0 0-4m0 4a2 2 0 1 1 0-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 1 0 0-4m0 4a2 2 0 1 1 0-4m0 4v2m0-6V4"/></svg>
+                                </div>
+                                <div style="flex:1;">
+                                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+                                        <span style="font-size:13px;font-weight:500;">Custom Fields nachpflegen</span>
+                                        <span style="font-size:10px;padding:1px 7px;border-radius:999px;background:rgba(99,102,241,.1);color:#6366f1;border:1px solid rgba(99,102,241,.2);">Sanfte Nachpflege</span>
+                                    </div>
+                                    <p style="font-size:12px;color:var(--muted);margin:0 0 6px;">Befüllt leere Custom Fields bei bereits verarbeiteten Dokumenten nach — Titel, Tags und Korrespondent bleiben unverändert.</p>
+                                    <p style="font-size:11px;color:var(--muted);margin:0 0 8px;"><strong style="color:var(--text);">Wann sinnvoll:</strong> Nachdem du neue Custom Fields in Paperless angelegt hast und diese bei bestehenden Dokumenten ergänzen möchtest.</p>
+                                    @if (_backfillProgress?.IsRunning == true)
+                                    {
+                                        <div style="margin-bottom:8px;">
+                                            <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;">
+                                                <span style="color:var(--muted);">@_backfillProgress.Current von @_backfillProgress.Total</span>
+                                                <span style="color:var(--muted);">@_backfillProgress.Updated aktualisiert</span>
+                                            </div>
+                                            <div style="height:4px;background:var(--border);border-radius:999px;overflow:hidden;">
+                                                @if (_backfillProgress.Total > 0) { var pct2 = (int)(_backfillProgress.Current * 100.0 / _backfillProgress.Total); <div style="width:@(pct2)%;height:100%;background:#6366f1;border-radius:999px;transition:width 0.4s;"></div> }
+                                            </div>
+                                        </div>
+                                    }
+                                    <button class="btn secondary !py-1.5 !text-sm" @onclick="StartBackfill" disabled="@(_backfillProgress?.IsRunning == true)">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;" aria-hidden="true"><path d="M12 6V4m0 2a2 2 0 1 0 0 4m0-4a2 2 0 1 1 0 4"/></svg>
+                                        @(_backfillProgress?.IsRunning == true ? "Läuft …" : "Nachpflegen starten")
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- UNWIDERRUFLICH: Löschaktionen -->
+                    <div class="sgroup">
+                        <p class="stitle" style="color:var(--danger);display:flex;align-items:center;gap:6px;">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:14px;height:14px;" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                            Unwiderrufliche Aktionen
+                        </p>
+                        <div style="background:rgba(239,68,68,.04);border:1px solid rgba(239,68,68,.2);border-radius:10px;padding:12px;margin-bottom:10px;">
+                            <p style="font-size:12px;color:rgba(239,68,68,.8);margin:0;display:flex;align-items:center;gap:6px;">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;flex-shrink:0;" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+                                Betrifft das GESAMTE Paperless-System. Bitte vorher ein Backup erstellen. Diese Aktionen können nicht rückgängig gemacht werden.
+                            </p>
+                        </div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                            <div class="sbox">
+                                <div style="display:flex;gap:10px;align-items:flex-start;">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="1.8" style="width:16px;height:16px;flex-shrink:0;margin-top:2px;" aria-hidden="true"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+                                    <div>
+                                        <p style="font-size:12px;font-weight:500;margin:0 0 3px;">Tags löschen</p>
+                                        <p style="font-size:11px;color:var(--muted);margin:0 0 8px;">Entfernt alle Tags aus Paperless. Dokumente verlieren ihre Tag-Zuordnungen.</p>
+                                        <button class="del-btn" disabled="@_deletingTags" @onclick="() => _confirmTags?.Show()">@(_deletingTags ? "Lösche …" : "Tags löschen")</button>
+                                        @if (_deleteTagsResult is not null) { <p class="shint mt-1">@(_deleteTagsResult.Success ? $"{_deleteTagsResult.DeletedCount} gelöscht" : _deleteTagsResult.Message)</p> }
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="sbox">
+                                <div style="display:flex;gap:10px;align-items:flex-start;">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="1.8" style="width:16px;height:16px;flex-shrink:0;margin-top:2px;" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/></svg>
+                                    <div>
+                                        <p style="font-size:12px;font-weight:500;margin:0 0 3px;">Dokumenttypen löschen</p>
+                                        <p style="font-size:11px;color:var(--muted);margin:0 0 8px;">Entfernt alle Dokumenttypen. Dokumente verlieren ihre Typ-Zuordnung.</p>
+                                        <button class="del-btn" disabled="@_deletingDocTypes" @onclick="() => _confirmDocTypes?.Show()">@(_deletingDocTypes ? "Lösche …" : "Typen löschen")</button>
+                                        @if (_deleteDocTypesResult is not null) { <p class="shint mt-1">@(_deleteDocTypesResult.Success ? $"{_deleteDocTypesResult.DeletedCount} gelöscht" : _deleteDocTypesResult.Message)</p> }
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="sbox">
+                                <div style="display:flex;gap:10px;align-items:flex-start;">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="1.8" style="width:16px;height:16px;flex-shrink:0;margin-top:2px;" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+                                    <div>
+                                        <p style="font-size:12px;font-weight:500;margin:0 0 3px;">Korrespondenten löschen</p>
+                                        <p style="font-size:11px;color:var(--muted);margin:0 0 8px;">Entfernt alle Korrespondenten aus Paperless.</p>
+                                        <button class="del-btn" disabled="@_deletingCorrespondents" @onclick="() => _confirmCorrespondents?.Show()">@(_deletingCorrespondents ? "Lösche …" : "Korrespondenten löschen")</button>
+                                        @if (_deleteCorrespondentsResult is not null) { <p class="shint mt-1">@(_deleteCorrespondentsResult.Success ? $"{_deleteCorrespondentsResult.DeletedCount} gelöscht" : _deleteCorrespondentsResult.Message)</p> }
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="sbox" style="border-color:rgba(239,68,68,.3);background:rgba(239,68,68,.03);">
+                                <div style="display:flex;gap:10px;align-items:flex-start;">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="1.8" style="width:16px;height:16px;flex-shrink:0;margin-top:2px;" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+                                    <div>
+                                        <p style="font-size:12px;font-weight:500;color:var(--danger);margin:0 0 3px;">Alles löschen</p>
+                                        <p style="font-size:11px;color:var(--muted);margin:0 0 8px;">Tags + Typen + Korrespondenten auf einmal. Vollständiger Reset aller Metadaten.</p>
+                                        <button class="del-btn strong" disabled="@_fullResetting" @onclick="() => _confirmFullReset?.Show()">@(_fullResetting ? "Lösche alles …" : "Alles löschen")</button>
+                                        @if (_fullResetResult is not null) { <p class="shint mt-1">@(_fullResetResult.Success ? $"{_fullResetResult.TagsDeleted}T/{_fullResetResult.DocumentTypesDeleted}D/{_fullResetResult.CorrespondentsDeleted}K gelöscht" : _fullResetResult.Message)</p> }
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                }
+
+                @if (SettingsTabState.ActiveTab == "Lizenz")
+                {
+                    <div class="sgroup">
+                        <p class="stitle">Lizenz</p>
+                        <div class="sbox">
+                            <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+                                <div style="padding:10px;background:var(--accent-t,rgba(29,158,117,.1));border-radius:10px;">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.8" style="width:22px;height:22px;" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                                </div>
+                                <div>
+                                    <p style="font-size:14px;font-weight:600;margin:0 0 2px;">paperLeo @(_proMode ? "Pro" : "Community")</p>
+                                    <p style="font-size:12px;color:var(--muted);margin:0;">@(_proMode ? "Vollversion aktiv — alle Features freigeschaltet" : "Community-Version — Upgrade für alle Features")</p>
+                                </div>
+                            </div>
+
+                            @if (!_proMode)
+                            {
+                                <div style="background:rgba(29,158,117,.05);border:1px solid rgba(29,158,117,.15);border-radius:8px;padding:12px;margin-bottom:14px;">
+                                    <p style="font-size:12px;font-weight:500;color:var(--accent);margin:0 0 8px;">Pro freischalten</p>
+                                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:10px;">
+                                        @foreach (var f in new[]{"Prompt-Assistent mit Speichern","Unlimitierte Tags & Dokumenttypen","KI-Kostenkontrolle","Batch-Verarbeitung","Backfill-Funktion","Priority Support"})
+                                        {
+                                            <div style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" style="width:11px;height:11px;flex-shrink:0;"><polyline points="20 6 9 17 4 12"/></svg>
+                                                @f
+                                            </div>
+                                        }
+                                    </div>
+                                    <a href="https://payhip.com/b/4auSd" target="_blank" class="btn" style="font-size:12px;padding:6px 14px;display:inline-block;text-decoration:none;">
+                                        Jetzt upgraden →
+                                    </a>
+                                </div>
+                            }
+
+                            <div class="sfield">
+                                <label>Lizenzschlüssel eingeben</label>
+                                <div style="display:flex;gap:8px;">
+                                    <input @bind="_licenseKey" placeholder="PAPERLEO-PRO-XXXX-XXXX-XXXX" style="flex:1;font-family:monospace;font-size:12px;" />
+                                    <button class="btn !py-1.5 !text-sm" @onclick="ActivateLicense" disabled="@_activatingLicense">
+                                        @(_activatingLicense ? "Prüfe …" : "Aktivieren")
+                                    </button>
+                                </div>
+                                @if (_licenseMessage is not null)
+                                {
+                                    <span class="badge @(_licenseSuccess ? "ok" : "error") mt-1">@_licenseMessage</span>
+                                }
+                            </div>
+
+                            @if (_proMode)
+                            {
+                                <div style="margin-top:10px;">
+                                    <button class="btn secondary !py-1.5 !text-sm" @onclick="DeactivateLicense">Lizenz deaktivieren</button>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+
+                @if (SettingsTabState.ActiveTab == "Hilfe")
+                {
+                    <!-- MANUAL HERO -->
+                    <div class="sgroup">
+                        <div style="background:linear-gradient(135deg,rgba(29,158,117,.15) 0%,rgba(29,158,117,.04) 100%);border:1px solid rgba(29,158,117,.25);border-radius:14px;padding:24px 20px;">
+                            <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;">
+                                <div style="padding:12px;background:rgba(29,158,117,.2);border-radius:12px;flex-shrink:0;">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--c-accent)" stroke-width="1.8" style="width:28px;height:28px;" aria-hidden="true"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+                                </div>
+                                <div>
+                                    <p style="font-size:18px;font-weight:800;margin:0 0 4px;color:var(--c-text);">paperLeo — Benutzerhandbuch</p>
+                                    <p style="font-size:12px;color:var(--c-muted);margin:0;">KI-gestützte Dokumentenverarbeitung für Paperless-ngx · Version 5.0</p>
+                                </div>
+                            </div>
+                            <p style="font-size:13px;line-height:1.8;margin:0;color:var(--c-muted);">paperLeo verbindet deine <strong style="color:var(--c-text);">Paperless-ngx</strong>-Instanz mit einer KI und vergibt automatisch Titel, Datum, Korrespondent, Tags, Dokumenttyp und Custom Fields — für jedes neue Dokument, vollautomatisch, ohne Cloud, ohne monatliches Abo.</p>
+                            <!-- Inhaltsverzeichnis -->
+                            <div style="margin-top:16px;display:flex;flex-wrap:wrap;gap:6px;">
+                                @foreach (var (num, label) in new[]{ ("1","Voraussetzungen"), ("2","Installation"), ("3","Verbindung einrichten"), ("4","KI konfigurieren"), ("5","Vokabular"), ("6","Prompt-Assistent"), ("7","Verhalten & Automatik"), ("8","Webhook"), ("9","Custom Fields"), ("10","Dashboard"), ("11","Lizenz"), ("12","Troubleshooting") })
+                                {
+                                    <span style="font-size:11px;background:rgba(29,158,117,.1);border:1px solid rgba(29,158,117,.2);border-radius:6px;padding:3px 8px;color:var(--c-accent);">@num · @label</span>
+                                }
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 1. VORAUSSETZUNGEN -->
+                    <div class="sgroup">
+                        <p class="stitle" style="font-size:13px;font-weight:700;">1 · Voraussetzungen</p>
+                        <div class="sbox">
+                            <p style="font-size:12px;color:var(--c-muted);margin:0 0 12px;line-height:1.7;">Bevor du paperLeo in Betrieb nimmst, stelle sicher dass Folgendes vorhanden ist:</p>
+                            @foreach (var (ok, item, detail) in new[]{
+                                ("✓","Paperless-ngx läuft","Eine funktionierende Paperless-ngx-Instanz (v1.17 oder neuer). paperLeo ist ein Add-on — es ersetzt Paperless nicht, sondern erweitert es."),
+                                ("✓","API-Token von Paperless","Unter Paperless → Profil (oben rechts) → API-Token → Token anzeigen/generieren. Dieser Token erlaubt paperLeo den Zugriff auf deine Dokumente."),
+                                ("✓","KI-API-Key","Entweder Google Gemini (kostenloser Einstieg unter aistudio.google.com), OpenAI (platform.openai.com) oder ein lokales Modell via Ollama. Ohne KI-Key funktioniert die Verarbeitung nicht."),
+                                ("✓","Netzwerkzugriff","paperLeo muss deine Paperless-URL erreichen können. Bei Docker: beide Container müssen im selben Netzwerk sein oder Paperless muss per IP/Hostname erreichbar sein.")
+                            })
+                            {
+                                <div style="display:flex;gap:10px;margin-bottom:12px;border-bottom:1px solid rgba(255,255,255,.04);padding-bottom:12px;">
+                                    <span style="color:var(--c-accent);font-size:14px;flex-shrink:0;margin-top:1px;">@ok</span>
+                                    <div>
+                                        <p style="font-size:12px;font-weight:600;color:var(--c-text);margin:0 0 2px;">@item</p>
+                                        <p style="font-size:11px;color:var(--c-muted);margin:0;line-height:1.6;">@detail</p>
+                                    </div>
+                                </div>
+                            }
+                            <div style="background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.2);border-radius:8px;padding:10px;display:flex;gap:8px;">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="rgba(245,158,11,.8)" stroke-width="2" style="width:14px;height:14px;flex-shrink:0;margin-top:1px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                                <p style="font-size:11px;color:rgba(245,158,11,.9);margin:0;line-height:1.6;">paperLeo sendet den Text deiner Dokumente an die KI-API deines Providers. Die Dokumente selbst verlassen deine Paperless-Instanz nicht — nur der extrahierte Text wird übertragen.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 2. INSTALLATION -->
+                    <div class="sgroup">
+                        <p class="stitle" style="font-size:13px;font-weight:700;">2 · Installation</p>
+                        <div class="sbox">
+                            <p style="font-size:12px;font-weight:600;color:var(--c-text);margin:0 0 8px;">Option A — Docker (empfohlen)</p>
+                            <p style="font-size:11px;color:var(--c-muted);margin:0 0 10px;line-height:1.6;">Füge paperLeo zu deiner bestehenden <code style="background:rgba(255,255,255,.06);padding:1px 5px;border-radius:3px;font-size:10px;">docker-compose.yml</code> hinzu oder starte einen eigenständigen Container:</p>
+                            <div style="background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:12px;font-family:monospace;font-size:11px;color:#7dd3a8;line-height:1.8;overflow-x:auto;">
+                                services:<br/>
+                                &nbsp;&nbsp;paperleo:<br/>
+                                &nbsp;&nbsp;&nbsp;&nbsp;image: ghcr.io/loewemannit/paperleo:latest<br/>
+                                &nbsp;&nbsp;&nbsp;&nbsp;ports:<br/>
+                                &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;- "5080:8080"<br/>
+                                &nbsp;&nbsp;&nbsp;&nbsp;volumes:<br/>
+                                &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;- ./data:/app/data<br/>
+                                &nbsp;&nbsp;&nbsp;&nbsp;restart: unless-stopped
+                            </div>
+                            <p style="font-size:11px;color:var(--c-muted);margin:10px 0 0;line-height:1.6;">Das <code style="background:rgba(255,255,255,.06);padding:1px 5px;border-radius:3px;font-size:10px;">./data</code>-Volume ist wichtig — darin werden alle Einstellungen und das Aktivitätslog gespeichert. Ohne dieses Volume gehen deine Einstellungen beim Neustart verloren.</p>
+
+                            <div style="margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,.05);">
+                                <p style="font-size:12px;font-weight:600;color:var(--c-text);margin:0 0 6px;">Option B — Synology NAS mit Portainer</p>
+                                @foreach (var (n, s) in new[]{
+                                    ("1","Portainer öffnen → Stacks → Add Stack"),
+                                    ("2","Obigen docker-compose-Code einfügen"),
+                                    ("3","Environment Variables: können leer bleiben — Einstellungen werden über die UI gemacht"),
+                                    ("4","Deploy the stack → warten bis Container grün"),
+                                    ("5","Browser: http://<NAS-IP>:5080")
+                                })
+                                {
+                                    <div style="display:flex;gap:8px;margin-bottom:6px;">
+                                        <span style="width:18px;height:18px;border-radius:50%;background:rgba(29,158,117,.15);border:1px solid rgba(29,158,117,.3);color:var(--c-accent);font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">@n</span>
+                                        <p style="font-size:11px;color:var(--c-muted);margin:0;line-height:1.6;">@s</p>
+                                    </div>
+                                }
+                            </div>
+
+                            <div style="margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,.05);">
+                                <p style="font-size:12px;font-weight:600;color:var(--c-text);margin:0 0 6px;">Option C — Direkt mit dotnet run (Entwicklung)</p>
+                                <div style="background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;font-family:monospace;font-size:11px;color:#7dd3a8;line-height:1.8;">
+                                    cd C:\Projekte\PaperlessAiCore<br/>
+                                    dotnet run --project src\PaperlessAiCore.Api
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 3. VERBINDUNG -->
+                    <div class="sgroup">
+                        <p class="stitle" style="font-size:13px;font-weight:700;">3 · Verbindung mit Paperless einrichten</p>
+                        <div class="sbox">
+                            <p style="font-size:12px;color:var(--c-muted);margin:0 0 12px;line-height:1.7;">Gehe zu <strong style="color:var(--c-text);">Einstellungen → Verbindung & KI</strong>. Hier trägst du ein wie paperLeo deine Paperless-Instanz erreicht.</p>
+                            @foreach (var (field, desc, example) in new[]{
+                                ("Paperless-URL","Die vollständige Adresse deiner Paperless-Instanz inklusive Port. Kein abschließender Schrägstrich.","http://192.168.1.100:8000 oder https://paperless.meinserver.de"),
+                                ("API-Token","Der persönliche Token aus deinem Paperless-Profil. Niemals weitergeben — er gewährt vollen Zugriff auf deine Dokumente.","Zu finden unter Paperless → Profil-Icon → API Token"),
+                                ("Verarbeitungs-Tag","Der Tag den paperLeo als Signal nutzt: »dieses Dokument soll verarbeitet werden«. Nur Dokumente MIT diesem Tag werden analysiert.","Standard: ai-process (passe ihn in Paperless und hier gleich an)")
+                            })
+                            {
+                                <div style="margin-bottom:14px;border-bottom:1px solid rgba(255,255,255,.04);padding-bottom:14px;">
+                                    <p style="font-size:12px;font-weight:600;color:var(--c-accent);margin:0 0 3px;">@field</p>
+                                    <p style="font-size:11px;color:var(--c-muted);margin:0 0 5px;line-height:1.6;">@desc</p>
+                                    <p style="font-size:10px;color:rgba(29,158,117,.6);margin:0;font-style:italic;">Beispiel: @example</p>
+                                </div>
+                            }
+                            <div style="background:rgba(29,158,117,.06);border:1px solid rgba(29,158,117,.15);border-radius:8px;padding:10px;">
+                                <p style="font-size:11px;color:var(--c-muted);margin:0;line-height:1.6;"><strong style="color:var(--c-text);">→ Verbindung testen</strong> klicken. Grünes Häkchen = Paperless erreichbar und Token gültig. Roter Fehler = URL oder Token prüfen.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 4. KI KONFIGURIEREN -->
+                    <div class="sgroup">
+                        <p class="stitle" style="font-size:13px;font-weight:700;">4 · KI-Provider konfigurieren</p>
+                        <div class="sbox">
+                            <p style="font-size:12px;color:var(--c-muted);margin:0 0 12px;line-height:1.7;">paperLeo unterstützt drei Provider. Wähle den der zu dir passt:</p>
+                            @foreach (var (name, pros, cons, model, url) in new[]{
+                                ("Google Gemini (empfohlen für Einsteiger)","Kostenloser Einstieg, sehr gute Deutsch-Verarbeitung, schnell","Kostenlose Tier hat Anfrage-Limit pro Minute","gemini-2.0-flash","aistudio.google.com → API Keys"),
+                                ("OpenAI (GPT)","Sehr hohe Qualität, zuverlässig","Kostenpflichtig ab dem ersten Token","gpt-4o-mini (günstig) oder gpt-4o","platform.openai.com → API Keys"),
+                                ("Ollama / Lokales Modell","Komplett privat, keine Cloud, keine Kosten","Benötigt leistungsstarke Hardware (min. 16 GB RAM)","llama3, mistral, phi3 etc.","Ollama-URL: http://localhost:11434")
+                            })
+                            {
+                                <div style="margin-bottom:14px;border-bottom:1px solid rgba(255,255,255,.04);padding-bottom:14px;">
+                                    <p style="font-size:12px;font-weight:700;color:var(--c-text);margin:0 0 6px;">@name</p>
+                                    <div style="display:flex;gap:16px;margin-bottom:6px;">
+                                        <div style="flex:1;">
+                                            <p style="font-size:10px;font-weight:600;color:var(--c-accent);margin:0 0 2px;">✓ Vorteile</p>
+                                            <p style="font-size:11px;color:var(--c-muted);margin:0;line-height:1.5;">@pros</p>
+                                        </div>
+                                        <div style="flex:1;">
+                                            <p style="font-size:10px;font-weight:600;color:rgba(239,68,68,.8);margin:0 0 2px;">✗ Nachteile</p>
+                                            <p style="font-size:11px;color:var(--c-muted);margin:0;line-height:1.5;">@cons</p>
+                                        </div>
+                                    </div>
+                                    <p style="font-size:10px;color:rgba(29,158,117,.7);margin:0;">Empfohlenes Modell: <strong>@model</strong> · API-Key holen: @url</p>
+                                </div>
+                            }
+                            <div style="background:rgba(29,158,117,.06);border:1px solid rgba(29,158,117,.15);border-radius:8px;padding:10px;">
+                                <p style="font-size:11px;color:var(--c-muted);margin:0;line-height:1.6;"><strong style="color:var(--c-text);">→ KI testen</strong> klicken nach dem Eintragen. Grünes Häkchen = KI antwortet korrekt. Roter Fehler = API-Key ungültig oder Modellname falsch.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 5. VOKABULAR -->
+                    <div class="sgroup">
+                        <p class="stitle" style="font-size:13px;font-weight:700;">5 · Vokabular — Tags & Dokumenttypen</p>
+                        <div class="sbox">
+                            <p style="font-size:12px;color:var(--c-muted);margin:0 0 12px;line-height:1.7;">Das Vokabular ist die Liste der Tags und Dokumenttypen die paperLeo kennt und vergeben darf. <strong style="color:var(--c-text);">Je präziser und vollständiger das Vokabular, desto besser die KI-Ergebnisse.</strong></p>
+
+                            <p style="font-size:12px;font-weight:600;color:var(--c-text);margin:0 0 8px;">Tags — was ist das?</p>
+                            <p style="font-size:11px;color:var(--c-muted);margin:0 0 12px;line-height:1.6;">Tags sind Schlagwörter die einem Dokument mehrere Kategorien geben können. Ein Dokument kann gleichzeitig »Steuer« und »Fahrzeug« sein. paperLeo wählt aus deiner Tag-Liste die passenden aus — es erfindet keine neuen Tags (wenn du »Nur vorhandene verwenden« aktivierst).</p>
+
+                            <p style="font-size:12px;font-weight:600;color:var(--c-text);margin:0 0 8px;">Dokumenttypen — was ist das?</p>
+                            <p style="font-size:11px;color:var(--c-muted);margin:0 0 12px;line-height:1.6;">Jedes Dokument hat genau einen Typ. Typische Werte: Rechnung, Vertrag, Mahnung, Kontoauszug, Bescheid, Lohnabrechnung. paperLeo wählt den am besten passenden aus deiner Liste.</p>
+
+                            <p style="font-size:12px;font-weight:600;color:var(--c-text);margin:0 0 8px;">Vokabular befüllen — drei Wege</p>
+                            @foreach (var (n, title, desc) in new[]{
+                                ("A","Manuell eingeben","Direkt in das Textfeld tippen. Komma-getrennt, z.B.: Rechnung, Vertrag, Steuer, Fahrzeug, Versicherung"),
+                                ("B","Aus Paperless importieren (Pro)","Holt alle bereits in Paperless vorhandenen Tags/Typen und fügt sie ins Vokabular ein. Ideal wenn du Paperless schon länger nutzt."),
+                                ("C","KI-Vorschlag (Pro)","paperLeo analysiert deine letzten 50 Dokumente und schlägt passende Tags/Typen vor basierend auf dem was darin vorkommt.")
+                            })
+                            {
+                                <div style="display:flex;gap:10px;margin-bottom:8px;">
+                                    <span style="width:20px;height:20px;border-radius:6px;background:rgba(29,158,117,.15);color:var(--c-accent);font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">@n</span>
+                                    <div>
+                                        <p style="font-size:11px;font-weight:600;color:var(--c-text);margin:0 0 1px;">@title</p>
+                                        <p style="font-size:11px;color:var(--c-muted);margin:0;line-height:1.5;">@desc</p>
+                                    </div>
+                                </div>
+                            }
+                            <div style="margin-top:12px;background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.2);border-radius:8px;padding:10px;">
+                                <p style="font-size:11px;color:rgba(245,158,11,.9);margin:0;line-height:1.6;"><strong>Tipp:</strong> Aktiviere »Nur vorhandene Tags/Typen verwenden« — dann bleibt deine Paperless-Bibliothek sauber und paperLeo erfindet keine Fantasie-Tags.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 6. PROMPT-ASSISTENT -->
+                    <div class="sgroup">
+                        <p class="stitle" style="font-size:13px;font-weight:700;">6 · Prompt-Assistent — personalisierte KI</p>
+                        <div class="sbox">
+                            <p style="font-size:12px;color:var(--c-muted);margin:0 0 12px;line-height:1.7;">Der Prompt-Assistent ist das Herzstück von paperLeo. Hier gibst du der KI an <strong style="color:var(--c-text);">wer du bist und welche Dokumente du typischerweise hast</strong> — damit die KI Korrespondenten, Titel und Felder viel präziser erkennt.</p>
+
+                            @foreach (var (step, title, desc, ex) in new[]{
+                                ("1","Personen & Name","Dein Name, Haushaltsmitglieder, Familienangehörige. Die KI erkennt dann Dokumente die an »Max Mustermann« oder »Maria Mustermann« adressiert sind und ordnet sie richtig zu.","Max Mustermann, Maria Mustermann, Kind: Lena Mustermann"),
+                                ("2","Adressen & Wohnort","Deine Wohnadresse, frühere Adressen, Arbeitgeberadresse. Wichtig damit Briefe an deine Adresse dem richtigen Korrespondenten zugeordnet werden.","Musterstraße 12, 53474 Bad Neuenahr"),
+                                ("3","Fahrzeuge","Kennzeichen, Marke, Modell. paperLeo erkennt dann »BMW 320i AW-AB-123« als dein Fahrzeug und vergibt automatisch den Tag »Fahrzeug«.","BMW i4 M50 · AW-XY-123 · Mercedes Sprinter · AW-AB-456"),
+                                ("4","Arbeitgeber & Beruf","Aktueller und frühere Arbeitgeber, Steuerklasse, ob du selbstständig bist. Gehaltsabrechnungen und Dienstreisen werden so korrekt klassifiziert.","Huawei Technologies · früher: Dell Technologies"),
+                                ("5","Steuer & Finanzen","Steuerberater, Finanzamt, Bankverbindungen. Wichtig für korrekte Korrespondenten bei Steuerbescheiden, Kontoauszügen und Mahnungen.","Steuerbüro Stehling-Reinders · DKB · N26 · Amex · Revolut"),
+                                ("6","Immobilien & Versorger","Adresse(n), Vermieter, Mietobjekte, Versorger (Strom, Wasser, Gas, Internet). Rechnungen werden automatisch der richtigen Immobilie zugeordnet.","Eigenheim Bad Neuenahr · Stadtwerke · Telekom · Vodafone"),
+                                ("7","Titel-Schema & Sonstiges","Wie sollen Titel aussehen? Welche Besonderheiten gibt es? Das Titel-Schema steuert das Format jedes automatisch generierten Dokumententitels.","Korrespondent - Typ - Beschreibung - Betrag")
+                            })
+                            {
+                                <div style="display:flex;gap:12px;margin-bottom:14px;border-bottom:1px solid rgba(255,255,255,.04);padding-bottom:14px;">
+                                    <div style="width:28px;height:28px;border-radius:50%;background:var(--c-accent);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;">@step</div>
+                                    <div style="flex:1;">
+                                        <p style="font-size:12px;font-weight:600;color:var(--c-text);margin:0 0 3px;">@title</p>
+                                        <p style="font-size:11px;color:var(--c-muted);margin:0 0 5px;line-height:1.6;">@desc</p>
+                                        <p style="font-size:10px;color:rgba(29,158,117,.7);margin:0;font-style:italic;">Beispiel: @ex</p>
+                                    </div>
+                                </div>
+                            }
+                            <div style="background:rgba(29,158,117,.06);border:1px solid rgba(29,158,117,.15);border-radius:8px;padding:10px;">
+                                <p style="font-size:11px;color:var(--c-muted);margin:0;line-height:1.6;"><strong style="color:var(--c-text);">Ergebnis:</strong> paperLeo generiert aus deinen Angaben automatisch einen vollständigen System-Prompt der bei jeder KI-Anfrage mitgeschickt wird. Du kannst ihn unter »Eigener Prompt« jederzeit manuell anpassen.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 7. VERHALTEN -->
+                    <div class="sgroup">
+                        <p class="stitle" style="font-size:13px;font-weight:700;">7 · Verhalten & Automatik</p>
+                        <div class="sbox">
+                            <p style="font-size:12px;color:var(--c-muted);margin:0 0 12px;line-height:1.7;">Unter <strong style="color:var(--c-text);">Einstellungen → Verhalten</strong> steuerst du wie und wann paperLeo aktiv wird.</p>
+                            @foreach (var (setting, desc) in new[]{
+                                ("Automatik ein/aus","Wenn aktiviert, prüft paperLeo regelmäßig ob neue Dokumente verarbeitet werden müssen. Wenn deaktiviert, werden Dokumente nur über den Webhook oder manuell angestoßen."),
+                                ("Poll-Intervall (Sekunden)","Wie oft paperLeo nachschaut ob neue Dokumente da sind. Standard: 60 Sekunden. Kleinere Werte = schnellere Verarbeitung, aber mehr API-Anfragen an Paperless."),
+                                ("Parallelverarbeitung","Wie viele Dokumente gleichzeitig verarbeitet werden. Standard: 1. Höhere Werte beschleunigen Batch-Verarbeitung, erzeugen aber mehr gleichzeitige KI-Anfragen (Kosten!)."),
+                                ("Tags vergeben","KI darf Tags aus deinem Vokabular vergeben. Deaktivieren wenn du Tags manuell setzen möchtest."),
+                                ("Korrespondenten erkennen","KI erkennt und setzt Korrespondenten (Absender/Ersteller des Dokuments). Sehr empfohlen."),
+                                ("Dokumenttyp klassifizieren","KI wählt den passenden Dokumenttyp aus deinem Vokabular. Sehr empfohlen."),
+                                ("Titel generieren","KI erstellt einen strukturierten Titel nach deinem Titel-Schema. Sehr empfohlen."),
+                                ("Custom Fields befüllen","KI befüllt zusätzliche Felder wie Rechnungsbetrag, Rechnungsnummer, Fahrzeug etc. Nur wenn du Custom Fields in Paperless angelegt hast.")
+                            })
+                            {
+                                <div style="display:flex;gap:10px;margin-bottom:10px;border-bottom:1px solid rgba(255,255,255,.04);padding-bottom:10px;">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--c-accent)" stroke-width="1.8" style="width:13px;height:13px;flex-shrink:0;margin-top:2px;"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                                    <div>
+                                        <p style="font-size:11px;font-weight:600;color:var(--c-text);margin:0 0 2px;">@setting</p>
+                                        <p style="font-size:11px;color:var(--c-muted);margin:0;line-height:1.5;">@desc</p>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    </div>
+
+                    <!-- 8. WEBHOOK -->
+                    <div class="sgroup">
+                        <p class="stitle" style="font-size:13px;font-weight:700;">8 · Webhook einrichten (empfohlen)</p>
+                        <div class="sbox">
+                            <p style="font-size:12px;color:var(--c-muted);margin:0 0 12px;line-height:1.7;">Mit einem Webhook reagiert paperLeo <strong style="color:var(--c-text);">sofort</strong> wenn ein neues Dokument in Paperless landet — ohne Polling-Verzögerung. Einrichten in Paperless unter <strong style="color:var(--c-text);">Workflows → Neuer Workflow</strong>:</p>
+                            @foreach (var (n, step, detail) in new[]{
+                                ("1","Trigger auswählen","»Dokument hinzugefügt« — damit wird der Webhook bei jedem neuen Dokument ausgelöst."),
+                                ("2","Action: Webhook","In der Workflow-Action »Webhook« auswählen (nicht »Tag vergeben« o.ä.)."),
+                                ("3","URL eintragen","http://&lt;paperleo-host&gt;:5080/api/webhook/document · Bei Docker auf demselben Host: http://paperleo:8080/api/webhook/document"),
+                                ("4","Parameter: url","Füge einen Parameter mit Name »url« und Wert »{doc_url}« hinzu. paperLeo erhält damit die Paperless-ID des neuen Dokuments."),
+                                ("5","Speichern & testen","Workflow speichern, dann ein Testdokument in Paperless hochladen. Im Dashboard → Aktivitätslog sollte innerhalb von Sekunden eine Verarbeitungszeile erscheinen.")
+                            })
+                            {
+                                <div style="display:flex;gap:10px;margin-bottom:12px;border-bottom:1px solid rgba(255,255,255,.04);padding-bottom:12px;">
+                                    <span style="width:22px;height:22px;border-radius:50%;background:rgba(29,158,117,.15);border:1px solid rgba(29,158,117,.3);color:var(--c-accent);font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">@n</span>
+                                    <div>
+                                        <p style="font-size:11px;font-weight:600;color:var(--c-text);margin:0 0 2px;">@step</p>
+                                        <p style="font-size:11px;color:var(--c-muted);margin:0;line-height:1.5;">@((MarkupString)detail)</p>
+                                    </div>
+                                </div>
+                            }
+                            <div style="background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.2);border-radius:8px;padding:10px;">
+                                <p style="font-size:11px;color:rgba(245,158,11,.9);margin:0;line-height:1.6;"><strong>Docker-Hinweis:</strong> Wenn paperLeo und Paperless im selben Docker-Netzwerk laufen, ersetze <code style="font-size:10px;background:rgba(0,0,0,.2);padding:1px 4px;border-radius:3px;">localhost</code> durch den Service-Namen aus der docker-compose.yml (z.B. <code style="font-size:10px;background:rgba(0,0,0,.2);padding:1px 4px;border-radius:3px;">paperleo</code>).</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 9. CUSTOM FIELDS -->
+                    <div class="sgroup">
+                        <p class="stitle" style="font-size:13px;font-weight:700;">9 · Custom Fields</p>
+                        <div class="sbox">
+                            <p style="font-size:12px;color:var(--c-muted);margin:0 0 12px;line-height:1.7;">Custom Fields sind zusätzliche strukturierte Datenfelder die paperLeo aus deinen Dokumenten extrahiert und direkt in Paperless speichert. Damit wird aus einem Dokument ein durchsuchbarer Datensatz.</p>
+                            <p style="font-size:12px;font-weight:600;color:var(--c-text);margin:0 0 8px;">Verfügbare Felder</p>
+                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:14px;">
+                                @foreach (var (field, desc) in new[]{
+                                    ("Rechnungsbetrag","Gesamtbetrag in € als Zahl"),
+                                    ("Rechnungsnummer","Rechnungs- oder Belegnummer"),
+                                    ("Steuernummer","Steuernummer oder Steuerjahr"),
+                                    ("Fahrzeug","Welches deiner Fahrzeuge betrifft das Dok."),
+                                    ("Vertragsnummer","Nummer des Vertrags oder der Police"),
+                                    ("Vertragsende","Datum des Vertragsendes"),
+                                    ("Fälligkeitsdatum","Zahlungsfrist bei Rechnungen/Mahnungen"),
+                                    ("Mietobjekt","Adresse bei Mietobjekt-Dokumenten"),
+                                    ("Gewerk / Dienstleistung","Bei Handwerkerrechnungen"),
+                                    ("Objekt / Adresse","Zugehörige Adresse"),
+                                    ("Familienmitglied","Falls Dok. einer anderen Person gehört"),
+                                    ("Belegnummer","Interne Belegnummer")
+                                })
+                                {
+                                    <div style="background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.05);border-radius:6px;padding:7px 9px;">
+                                        <p style="font-size:11px;font-weight:600;color:var(--c-accent);margin:0 0 1px;">@field</p>
+                                        <p style="font-size:10px;color:var(--c-muted);margin:0;">@desc</p>
+                                    </div>
+                                }
+                            </div>
+                            <p style="font-size:12px;font-weight:600;color:var(--c-text);margin:0 0 8px;">Felder in Paperless anlegen</p>
+                            <p style="font-size:11px;color:var(--c-muted);margin:0 0 10px;line-height:1.6;">Gehe zu <strong style="color:var(--c-text);">Verbindung & KI → Custom Fields → »Fehlende Felder anlegen«</strong>. paperLeo prüft welche Felder in Paperless noch nicht existieren und legt sie mit einem Klick an.</p>
+                            <div style="background:rgba(29,158,117,.06);border:1px solid rgba(29,158,117,.15);border-radius:8px;padding:10px;">
+                                <p style="font-size:11px;color:var(--c-muted);margin:0;line-height:1.6;"><strong style="color:var(--c-text);">Hinweis:</strong> Custom Fields müssen in Paperless existieren bevor paperLeo sie befüllen kann. Danach unter <strong style="color:var(--c-text);">Verhalten → Custom Fields aktivieren</strong> und die gewünschten Felder auswählen.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 10. DASHBOARD -->
+                    <div class="sgroup">
+                        <p class="stitle" style="font-size:13px;font-weight:700;">10 · Dashboard & Aktivitätslog</p>
+                        <div class="sbox">
+                            <p style="font-size:12px;color:var(--c-muted);margin:0 0 12px;line-height:1.7;">Das Dashboard zeigt dir auf einen Blick was paperLeo gerade tut und was in der Vergangenheit passiert ist.</p>
+                            @foreach (var (sname, desc) in new[]{
+                                ("Statusanzeige oben","Grüner Punkt = Verbindung zu Paperless aktiv. Roter Punkt = Verbindung unterbrochen. Der Punkt in der Topbar spiegelt denselben Status."),
+                                ("Aktivitätslog","Jede Verarbeitung wird protokolliert: Dokumentname, vergebene Tags/Typ/Titel, Zeitstempel, Erfolg oder Fehler. Scrolle nach unten für ältere Einträge."),
+                                ("Warteschlange","Zeigt Dokumente die gerade in der Verarbeitungsschlange warten oder aktuell verarbeitet werden."),
+                                ("Korrespondenten-Dubletten","Findet Korrespondenten die ähnlich aussehen (z.B. »Telekom« und »Deutsche Telekom GmbH«) und hilft sie zusammenzuführen — für eine saubere Paperless-Bibliothek."),
+                                ("Manuell anstoßen","Du kannst über das Dashboard einzelne Dokumente oder alle unverarbeiteten Dokumente manuell neu verarbeiten lassen.")
+                            })
+                            {
+                                <div style="display:flex;gap:10px;margin-bottom:10px;border-bottom:1px solid rgba(255,255,255,.04);padding-bottom:10px;">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--c-accent)" stroke-width="1.8" style="width:13px;height:13px;flex-shrink:0;margin-top:2px;"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+                                    <div>
+                                        <p style="font-size:11px;font-weight:600;color:var(--c-text);margin:0 0 2px;">@sname</p>
+                                        <p style="font-size:11px;color:var(--c-muted);margin:0;line-height:1.5;">@desc</p>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    </div>
+
+                    <!-- 11. LIZENZ -->
+                    <div class="sgroup">
+                        <p class="stitle" style="font-size:13px;font-weight:700;">11 · Community vs. Pro</p>
+                        <div class="sbox">
+                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
+                                <div style="background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.07);border-radius:10px;padding:14px;">
+                                    <p style="font-size:12px;font-weight:700;color:var(--c-muted);margin:0 0 10px;">Community (kostenlos)</p>
+                                    @foreach (var f in new[]{ "Vollständige Dokumentenverarbeitung", "KI-Titel, -Datum, -Korrespondent", "Webhook-Support", "Standard-Vokabular (5 Tags / 5 Typen)", "Dashboard & Aktivitätslog", "Docker-Deployment", "Community-Support via GitHub" })
+                                    { <div style="display:flex;gap:6px;margin-bottom:5px;"><span style="color:var(--c-accent);font-size:11px;">✓</span><p style="font-size:11px;color:var(--c-muted);margin:0;line-height:1.4;">@f</p></div> }
+                                </div>
+                                <div style="background:rgba(29,158,117,.06);border:1px solid rgba(29,158,117,.25);border-radius:10px;padding:14px;">
+                                    <p style="font-size:12px;font-weight:700;color:var(--c-accent);margin:0 0 10px;">Pro (Einmalzahlung)</p>
+                                    @foreach (var f in new[]{ "Alles aus Community", "Eigenes Vokabular (unbegrenzt)", "Import aus Paperless", "KI-Vorschläge für Tags/Typen", "Alle Custom Fields", "Batch-Verarbeitung", "Prompt-Assistent (alle 7 Schritte)", "Priority Support" })
+                                    { <div style="display:flex;gap:6px;margin-bottom:5px;"><span style="color:var(--c-accent);font-size:11px;">✓</span><p style="font-size:11px;color:var(--c-text);margin:0;line-height:1.4;">@f</p></div> }
+                                </div>
+                            </div>
+                            <a href="https://payhip.com/b/4auSd" target="_blank" style="display:flex;align-items:center;justify-content:center;gap:8px;padding:12px;background:var(--c-accent);border-radius:8px;text-decoration:none;color:#fff;font-size:12px;font-weight:700;">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                                paperLeo Pro kaufen — Einmalzahlung, kein Abo
+                            </a>
+                            <p style="font-size:10px;color:var(--c-muted);margin:8px 0 0;text-align:center;">Lizenzschlüssel kommt sofort per E-Mail · Unter Einstellungen → Lizenz eingeben</p>
+                        </div>
+                    </div>
+
+                    <!-- 12. TROUBLESHOOTING -->
+                    <div class="sgroup">
+                        <p class="stitle" style="font-size:13px;font-weight:700;">12 · Häufige Probleme & Lösungen</p>
+                        <div class="sbox">
+                            @foreach (var (prob, sol) in new[]{
+                                ("Dokumente werden nicht verarbeitet","(1) Verarbeitungs-Tag stimmt exakt überein? (2) Automatik eingeschaltet? (3) Verbindungstest grün? (4) Dashboard → Aktivitätslog auf Fehlermeldungen prüfen."),
+                                ("KI erfindet Tags die nicht existieren","»Nur vorhandene Tags verwenden« unter Vokabular aktivieren. Dann wählt paperLeo ausschließlich aus deiner Liste."),
+                                ("Verbindungstest schlägt fehl (Paperless)","URL prüfen: kein abschließender »/«, Port nicht vergessen (z.B. :8000). API-Token unter Paperless → Profil neu generieren."),
+                                ("KI-Test schlägt fehl","API-Key korrekt kopiert? Modellname exakt wie beim Provider angegeben (z.B. »gemini-2.0-flash« nicht »gemini-flash«)? Kontingent erschöpft?"),
+                                ("Korrespondent hat viele Varianten","Dashboard → Korrespondenten → Dubletten zusammenführen. Dann im Prompt-Assistenten die korrekte Schreibweise eintragen."),
+                                ("Einstellungen gehen nach Neustart verloren","Docker Volume prüfen: »./data:/app/data« muss in docker-compose.yml vorhanden sein. Ohne Volume gibt es keinen persistenten Speicher."),
+                                ("paperLeo im Docker nicht erreichbar","Port-Mapping: »5080:8080« in docker-compose.yml. Firewall auf dem Host für Port 5080 öffnen. Bei Synology: DSM-Firewall prüfen."),
+                                ("Webhook funktioniert nicht","URL in Paperless korrekt? Bei Docker: »localhost« durch Service-Namen ersetzen. Im Aktivitätslog nachschauen ob Webhook-Aufrufe ankommen."),
+                                ("Titel-Format passt nicht","Prompt-Assistenten Schritt 7 anpassen oder unter »Eigener Prompt« das Titel-Schema direkt bearbeiten."),
+                                ("Custom Fields werden nicht befüllt","(1) »Custom Fields aktivieren« unter Verhalten einschalten. (2) Felder in Paperless angelegt? (3) Gewünschte Felder in der Feldliste ausgewählt?")
+                            })
+                            {
+                                <div style="margin-bottom:12px;border-bottom:1px solid rgba(255,255,255,.04);padding-bottom:12px;">
+                                    <div style="display:flex;gap:8px;margin-bottom:4px;">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="var(--c-accent)" stroke-width="2" style="width:12px;height:12px;flex-shrink:0;margin-top:2px;"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                                        <p style="font-size:12px;font-weight:600;color:var(--c-text);margin:0;">@prob</p>
+                                    </div>
+                                    <p style="font-size:11px;color:var(--c-muted);margin:0 0 0 20px;line-height:1.6;">@sol</p>
+                                </div>
+                            }
+                        </div>
+                    </div>
+
+                    <!-- SUPPORT -->
+                    <div class="sgroup">
+                        <p class="stitle" style="font-size:13px;font-weight:700;">Support & Links</p>
+                        <div class="sbox">
+                            <div style="display:flex;flex-direction:column;gap:8px;">
+                                <a href="https://github.com/loewemannit/paperleo" target="_blank" style="display:flex;align-items:center;gap:10px;padding:10px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.07);border-radius:8px;text-decoration:none;" onmouseover="this.style.background='rgba(255,255,255,.05)'" onmouseout="this.style.background='rgba(255,255,255,.02)'">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--c-accent)" stroke-width="1.8" style="width:16px;height:16px;flex-shrink:0;"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
+                                    <div><p style="font-size:12px;font-weight:600;color:var(--c-text);margin:0 0 1px;">GitHub — Issues & Changelog</p><p style="font-size:11px;color:var(--c-muted);margin:0;">Bugs melden, Feature-Wünsche, Quellcode</p></div>
+                                </a>
+                                <a href="https://payhip.com/b/4auSd" target="_blank" style="display:flex;align-items:center;gap:10px;padding:10px;background:rgba(29,158,117,.05);border:1px solid rgba(29,158,117,.2);border-radius:8px;text-decoration:none;" onmouseover="this.style.background='rgba(29,158,117,.1)'" onmouseout="this.style.background='rgba(29,158,117,.05)'">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--c-accent)" stroke-width="1.8" style="width:16px;height:16px;flex-shrink:0;"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                                    <div><p style="font-size:12px;font-weight:600;color:var(--c-accent);margin:0 0 1px;">paperLeo Pro kaufen</p><p style="font-size:11px;color:var(--c-muted);margin:0;">Einmalzahlung · Lizenzschlüssel sofort per E-Mail</p></div>
+                                </a>
+                            </div>
+                            <div style="margin-top:12px;padding:10px;background:rgba(255,255,255,.02);border-radius:8px;text-align:center;">
+                                <p style="font-size:11px;color:var(--c-muted);margin:0;">paperLeo @(System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "5.0") · © Löwemann IT · Selbst-gehostet · Kein Tracking · Keine Cloud</p>
+                            </div>
+                        </div>
+                    </div>
+                }
+
+                    <!-- ERSTE SCHRITTE -->
+                    <div class="sgroup">
+                        <p class="stitle">Erste Schritte</p>
+                        <div class="sbox">
+                            @foreach (var (num, icon, title, desc) in new[]{
+                                ("1","M5 12H3m4-7l1.5 1.5M12 3v2m5.5 1.5L19 5M19 12h2M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z","Verbindung einrichten","Paperless-URL und API-Token unter »Verbindung & KI« eingeben. Mit »Verbindung testen« prüfen ob paperLeo deine Paperless-Instanz erreicht."),
+                                ("2","M9.75 3.104v5.714a2.25 2.25 0 0 1-.659 1.591L5 14.5M9.75 3.104c.251.023.501.05.75.082m-.75-.082a24.3 24.3 0 0 0-4.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L9.5 14.5","KI-Provider konfigurieren","API-Key für Google Gemini, OpenAI oder einen OpenAI-kompatiblen Provider (z.B. Ollama) hinterlegen und mit »KI testen« verifizieren."),
+                                ("3","M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 0 1 0 2.828l-7 7a2 2 0 0 1-2.828 0l-7-7A2 2 0 0 1 3 12V7a4 4 0 0 1 4-4z","Vokabular befüllen","Tags und Dokumenttypen eingeben oder direkt aus Paperless importieren. Je vollständiger das Vokabular, desto präziser die KI-Verschlagwortung."),
+                                ("4","M11 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-5m-1.414-9.414a2 2 0 1 1 2.828 2.828L11.828 15H9v-2.828l8.586-8.586z","Prompt erstellen","Den Prompt-Assistenten durchlaufen: Personen, Adressen, Fahrzeuge, Steuerregeln, Hausgeld usw. eingeben. paperLeo baut daraus automatisch einen präzisen System-Prompt."),
+                                ("5","M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z","Automatik starten","Unter »Verhalten« den automatischen Scan aktivieren und das Poll-Intervall festlegen. Alternativ: Webhook in Paperless einrichten für sofortige Verarbeitung (siehe unten).")
+                            })
+                            {
+                                <div style="display:flex;gap:12px;margin-bottom:14px;@(num=="5"?"":"border-bottom:1px solid rgba(255,255,255,0.05);padding-bottom:14px;")">
+                                    <div style="width:26px;height:26px;border-radius:50%;background:var(--c-accent);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;">@num</div>
+                                    <div style="flex:1;">
+                                        <p style="font-size:13px;font-weight:600;margin:0 0 3px;color:var(--c-text);">@title</p>
+                                        <p style="font-size:12px;color:var(--c-muted);margin:0;line-height:1.6;">@desc</p>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    </div>
+
+                    <!-- EINSTELLUNGEN ERKLÄRT -->
+                    <div class="sgroup">
+                        <p class="stitle">Einstellungen im Überblick</p>
+                        <div class="sbox">
+                            @foreach (var (tab, desc, tip) in new[]{
+                                ("Verbindung & KI","Paperless-URL, API-Token, Verarbeitungs-Tag und KI-Provider (Gemini, OpenAI, Ollama). Hier auch der Test-Button für beide Verbindungen.","Verarbeitungs-Tag: paperLeo erkennt nur Dokumente mit genau diesem Tag als »unverarbeitet«. Ohne Tag läuft gar nichts."),
+                                ("Verhalten","Automatisches Polling ein/aus, Poll-Intervall (Sekunden), Parallelverarbeitung, Fehlerdokumente erneut versuchen.","Webhook (empfohlen): reagiert sofort auf neue Dokumente statt alle N Sekunden zu pollen — spart Ressourcen und ist schneller."),
+                                ("Vokabular","Tag-Liste und Dokumenttypen die paperLeo kennt. »Nur vorhandene verwenden« verhindert, dass die KI neue Entitäten erfindet.","Tags aus Paperless importieren: holt alle vorhandenen Tags direkt aus deiner Instanz — kein manuelles Abtippen."),
+                                ("Prompt-Assistent","7-Schritte-Wizard zum Erstellen eines personalisierten System-Prompts. Eingaben werden zu einem strukturierten Prompt zusammengesetzt und gespeichert.","Platzhalter [tags] und [document_types] im Custom Prompt werden automatisch durch die aktuellen Listen aus Paperless ersetzt."),
+                                ("Löschaktionen","Tags, Dokumenttypen oder Korrespondenten bulk-löschen. Nützlich zum Aufräumen nach Testläufen.","Vorsicht: Löschen entfernt die Entitäten direkt in Paperless — Dokumente verlieren ihre Zuordnung."),
+                                ("Lizenz","Lizenzschlüssel eingeben um von Community auf Pro umzuschalten. Prüfung läuft direkt gegen Payhip-API.","Community: unbegrenzte Basisnutzung. Pro: erweiterte KI-Kostenkontrolle, Batch-Verarbeitung und Priority Support.")
+                            })
+                            {
+                                <div style="display:flex;gap:10px;margin-bottom:12px;@(tab=="Lizenz"?"":"border-bottom:1px solid rgba(255,255,255,0.05);padding-bottom:12px;")">
+                                    <div style="flex:1;">
+                                        <p style="font-size:12px;font-weight:600;color:var(--c-accent);margin:0 0 2px;">@tab</p>
+                                        <p style="font-size:12px;color:var(--c-muted);margin:0 0 5px;line-height:1.5;">@desc</p>
+                                        <div style="display:flex;align-items:flex-start;gap:6px;">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="rgba(245,158,11,.7)" stroke-width="2" style="width:12px;height:12px;flex-shrink:0;margin-top:1px;" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                                            <p style="font-size:11px;color:rgba(245,158,11,.8);margin:0;line-height:1.5;">@tip</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    </div>
+
+                    <!-- WEBHOOK -->
+                    <div class="sgroup">
+                        <p class="stitle">Webhook einrichten (empfohlen)</p>
+                        <div class="sbox">
+                            <p style="font-size:12px;color:var(--c-muted);margin:0 0 12px;line-height:1.6;">Mit einem Webhook verarbeitet paperLeo Dokumente sofort nach dem Hinzufügen — ohne Polling-Verzögerung. In Paperless-ngx einrichten unter <strong style="color:var(--c-text);">Workflows → Neuer Workflow</strong>:</p>
+                            @foreach (var (num, step) in new[]{
+                                ("1","Trigger: »Dokument hinzugefügt«"),
+                                ("2","Action: »Webhook«"),
+                                ("3","URL: http://&lt;paperleo-host&gt;:5080/api/webhook/document"),
+                                ("4","Parameter: url = {doc_url}")
+                            })
+                            {
+                                <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+                                    <div style="width:20px;height:20px;border-radius:50%;background:rgba(29,158,117,.15);border:1px solid rgba(29,158,117,.3);color:var(--c-accent);font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">@num</div>
+                                    <p style="font-size:12px;color:var(--c-muted);margin:0;font-family:@(num is "3" or "4" ? "monospace" : "inherit");font-size:@(num is "3" or "4" ? "11px" : "12px");">@((MarkupString)step)</p>
+                                </div>
+                            }
+                            <div style="margin-top:10px;padding:10px;background:rgba(29,158,117,.05);border:1px solid rgba(29,158,117,.15);border-radius:8px;">
+                                <p style="font-size:11px;color:var(--c-muted);margin:0;line-height:1.5;">Docker-Nutzer: Host ist die paperLeo-Container-IP oder der Service-Name im Docker-Netzwerk, nicht <code style="font-size:10px;background:rgba(255,255,255,.06);padding:1px 4px;border-radius:3px;">localhost</code>.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- FAQ -->
+                    <div class="sgroup">
+                        <p class="stitle">Häufige Fragen</p>
+                        <div class="sbox">
+                            @foreach (var (q, a) in new[]{
+                                ("Dokumente werden nicht verarbeitet","Prüfe: (1) Verarbeitungs-Tag stimmt exakt überein, (2) Automatik ist eingeschaltet, (3) Verbindungstest unter »Verbindung & KI« erfolgreich, (4) Logs auf Dashboard → Aktivitätslog prüfen."),
+                                ("KI erfindet Tags die nicht existieren","»Nur vorhandene Tags/Typen verwenden« unter Vokabular aktivieren. Dann wählt die KI ausschließlich aus deiner Liste."),
+                                ("Korrespondent hat viele Varianten (Telekom, Telekom GmbH …)","Unter Dashboard → Korrespondenten → »Dubletten zusammenführen« alle Varianten auf einen Hauptnamen konsolidieren. paperLeo normalisiert neue Dokumente dann automatisch."),
+                                ("Titel-Format passt nicht","Im Prompt-Assistenten Schritt 7 (Titel-Schema) anpassen. Das Schema steuert wie paperLeo Correspondent, Dokumenttyp, Rechnungsnummer und Betrag kombiniert."),
+                                ("API-Fehler 401 / Unauthorized","API-Token in Paperless abgelaufen oder falsch kopiert. Unter Paperless → Profil → API-Token neu generieren und hier unter »Verbindung & KI« aktualisieren."),
+                                ("paperLeo läuft im Docker aber ist nicht erreichbar","Port-Mapping prüfen: in docker-compose.yml muss »5080:8080« oder »8080:8080« definiert sein. Firewall/Router-Freigabe für den Port nicht vergessen.")
+                            })
+                            {
+                                <div style="margin-bottom:12px;border-bottom:1px solid rgba(255,255,255,0.05);padding-bottom:12px;">
+                                    <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:4px;">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="var(--c-accent)" stroke-width="2" style="width:13px;height:13px;flex-shrink:0;margin-top:1px;" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                                        <p style="font-size:12px;font-weight:600;color:var(--c-text);margin:0;">@q</p>
+                                    </div>
+                                    <p style="font-size:11px;color:var(--c-muted);margin:0 0 0 21px;line-height:1.6;">@a</p>
+                                </div>
+                            }
+                            <div style="display:flex;align-items:flex-start;gap:8px;">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="var(--c-accent)" stroke-width="2" style="width:13px;height:13px;flex-shrink:0;margin-top:1px;" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                                <div>
+                                    <p style="font-size:12px;font-weight:600;color:var(--c-text);margin:0 0 4px;">Einstellungen gehen nach Neustart verloren</p>
+                                    <p style="font-size:11px;color:var(--c-muted);margin:0;line-height:1.6;">Das Docker Volume muss korrekt gemountet sein. In docker-compose.yml prüfen ob <code style="font-size:10px;background:rgba(255,255,255,.06);padding:1px 4px;border-radius:3px;">./data:/app/data</code> vorhanden ist. Dann liegen settings.env und activity.jsonl persistent auf dem Host.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- SUPPORT & LINKS -->
+                    <div class="sgroup">
+                        <p class="stitle">Support & Links</p>
+                        <div class="sbox">
+                            <div style="display:flex;flex-direction:column;gap:10px;">
+                                <a href="https://github.com/loewemannit/paperleo" target="_blank" style="display:flex;align-items:center;gap:10px;padding:10px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.07);border-radius:8px;text-decoration:none;transition:background .12s;" onmouseover="this.style.background='rgba(255,255,255,.05)'" onmouseout="this.style.background='rgba(255,255,255,.02)'">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--c-accent)" stroke-width="1.8" style="width:16px;height:16px;flex-shrink:0;" aria-hidden="true"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
+                                    <div>
+                                        <p style="font-size:12px;font-weight:600;color:var(--c-text);margin:0 0 1px;">GitHub — Community Edition</p>
+                                        <p style="font-size:11px;color:var(--c-muted);margin:0;">Issues, Changelog, Quellcode</p>
+                                    </div>
+                                </a>
+                                <a href="https://payhip.com/b/4auSd" target="_blank" style="display:flex;align-items:center;gap:10px;padding:10px;background:rgba(29,158,117,.05);border:1px solid rgba(29,158,117,.2);border-radius:8px;text-decoration:none;transition:background .12s;" onmouseover="this.style.background='rgba(29,158,117,.1)'" onmouseout="this.style.background='rgba(29,158,117,.05)'">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--c-accent)" stroke-width="1.8" style="width:16px;height:16px;flex-shrink:0;" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                                    <div>
+                                        <p style="font-size:12px;font-weight:600;color:var(--c-accent);margin:0 0 1px;">paperLeo Pro kaufen</p>
+                                        <p style="font-size:11px;color:var(--c-muted);margin:0;">Einmalzahlung · Lizenzschlüssel sofort per E-Mail</p>
+                                    </div>
+                                </a>
+                            </div>
+                            <div style="margin-top:12px;padding:10px;background:rgba(255,255,255,.02);border-radius:8px;text-align:center;">
+                                <p style="font-size:11px;color:var(--c-muted);margin:0;">paperLeo @(System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "5.0") · Standalone, selbst-gehostet · Kein Tracking, keine Cloud</p>
+                            </div>
+                        </div>
+                    </div>
+                }
+        </div>
+    }
+</div>
+
+<!-- ConfirmDialoge global am Ende der Komponente - NICHT innerhalb von Tab-Content-Blöcken -->
+<ConfirmDialog @ref="_confirmTags" Title="Alle Tags löschen"
+    Text="Alle Tags werden unwiderruflich aus Paperless gelöscht. Dokumente verlieren ihre Tags. Bitte vorher ein Backup erstellen."
+    ConfirmLabel="Alle Tags löschen" TypeToConfirm="LÖSCHEN"
+    OnConfirmed="DeleteAllTagsConfirmed" />
+<ConfirmDialog @ref="_confirmDocTypes" Title="Alle Dokumenttypen löschen"
+    Text="Alle Dokumenttypen werden unwiderruflich aus Paperless gelöscht."
+    ConfirmLabel="Alle Dokumenttypen löschen" TypeToConfirm="LÖSCHEN"
+    OnConfirmed="DeleteAllDocTypesConfirmed" />
+<ConfirmDialog @ref="_confirmCorrespondents" Title="Alle Korrespondenten löschen"
+    Text="Alle Korrespondenten werden unwiderruflich aus Paperless gelöscht."
+    ConfirmLabel="Alle Korrespondenten löschen" TypeToConfirm="LÖSCHEN"
+    OnConfirmed="DeleteAllCorrespondentsConfirmed" />
+<ConfirmDialog @ref="_confirmFullReset" Title="Kompletter Reset"
+    Text="Tags, Dokumenttypen UND Korrespondenten werden alle gelöscht. Diese Aktion ist nicht umkehrbar."
+    ConfirmLabel="Alles löschen" TypeToConfirm="ALLES LÖSCHEN"
+    OnConfirmed="FullResetConfirmed" />
+<ConfirmDialog @ref="_confirmResetIndex" Title="Verarbeitungs-Tag zurücksetzen"
+    Text="Alle Dokumente werden als 'unverarbeitet' markiert und beim nächsten Scan neu analysiert."
+    ConfirmLabel="Zurücksetzen"
+    OnConfirmed="ResetIndexConfirmed" />
+
+<style>
+    .settings-header { padding: 14px 24px; border-bottom: 0.5px solid rgba(255,255,255,0.06); }
+    .settings-layout { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+    .settings-nav {
+        width: 190px; flex-shrink: 0;
+        border-right: 1px solid rgba(255,255,255,0.06);
+        padding: 12px 6px;
+        display: flex; flex-direction: column; gap: 1px;
+        overflow-y: auto;
+        background: rgba(0,0,0,0.15);
+    }
+    .settings-nav-item {
+        display: flex; align-items: center; gap: 10px;
+        padding: 9px 12px;
+        border-radius: 7px; border: none; border-left: 3px solid transparent;
+        background: none; cursor: pointer;
+        font-size: 13px; color: #94a3b8;
+        width: 100%; text-align: left;
+        transition: all 0.12s;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .settings-nav-item:hover { background: rgba(255,255,255,0.05); color: #e2e8f0; }
+    .settings-nav-item.active {
+        background: rgba(99,102,241,0.08);
+        color: #a5b4fc;
+        font-weight: 500;
+        border-left-color: #6366f1;
+    }
+    .nav-icon { width: 16px; flex-shrink: 0; opacity: 0.7; font-size: 14px; }
+    .settings-nav-item.active .nav-icon { opacity: 1; }
+    .settings-content { flex: 1; overflow-y: auto; padding: 18px 20px; display: flex; flex-direction: column; gap: 18px; }
+    .sgroup { display: flex; flex-direction: column; gap: 6px; }
+    .stitle { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.07em; margin: 0; }
+    .sbox { background: rgba(255,255,255,0.02); border: 0.5px solid rgba(255,255,255,0.07); border-radius: 10px; padding: 14px; }
+    .sfield { display: flex; flex-direction: column; gap: 3px; margin-bottom: 10px; }
+    .sfield:last-child { margin-bottom: 0; }
+    .sfield label { font-size: 11px; font-weight: 500; color: var(--muted); }
+    .shint { font-size: 11px; color: var(--muted); margin: 2px 0 0; line-height: 1.4; }
+    .saction { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 7px 0; border-bottom: 0.5px solid rgba(255,255,255,0.04); }
+    .toggle-row:last-child { border-bottom: none; }
+    .preset-btn { padding: 5px 10px; font-size: 12px; border: 0.5px solid rgba(255,255,255,0.1); border-radius: 6px; background: rgba(255,255,255,0.03); cursor: pointer; color: var(--text); transition: background 0.12s; display:inline-flex;align-items:center;gap:5px; }
+    .preset-btn:hover { background: rgba(255,255,255,0.07); }
+    .preset-btn.active { background: rgba(29,158,117,0.12); border-color: rgba(29,158,117,0.3); color: var(--accent); }
+    .demo-hint { background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.15); border-radius: 6px; padding: 7px 10px; font-size: 11px; color: #fbbf24; margin-bottom: 8px; }
+    .warn-hint { background: rgba(220,38,38,0.08); border: 1px solid rgba(220,38,38,0.15); border-radius: 6px; padding: 7px 10px; font-size: 11px; color: #f87171; margin-bottom: 8px; display: flex; align-items: center; }
+    .del-btn { padding: 9px 12px; border-radius: 7px; border: 0.5px solid rgba(220,38,38,0.2); background: rgba(220,38,38,0.04); color: #f87171; cursor: pointer; font-size: 13px; text-align: left; transition: background 0.12s; width: 100%; }
+    .del-btn:hover { background: rgba(220,38,38,0.09); }
+    .del-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .del-btn.strong { border-color: rgba(220,38,38,0.35); background: rgba(220,38,38,0.08); font-weight: 500; }
+    .del-btn.neutral { border-color: rgba(255,255,255,0.08); background: rgba(255,255,255,0.02); color: var(--muted); }
+    .del-btn.neutral:hover { background: rgba(255,255,255,0.05); color: var(--text); }
+    .save-row { display: flex; align-items: center; gap: 10px; padding-top: 2px; }
+</style>
+
+@code {
+    private bool _loading = true;
+    private string? _loadError;
+    private bool _proMode;
+    private bool _saving;
+    private string? _savedMessage;
+    private SettingsDto _settings = new();
+
+    private bool _testingPaperless, _testingLlm;
+    private ConnectionTestResult? _paperlessTestResult, _llmTestResult;
+
+    private bool _suggestingTags, _suggestingDocTypes, _seedingTags, _seedingDocTypes;
+    private bool _importingTagsFromPaperless, _importingDocTypesFromPaperless;
+    private SuggestVocabularyResult? _suggestTagsResult, _suggestDocTypesResult;
+    private SeedTagsResult? _seedTagsResult, _seedDocTypesResult;
+
+    // Lizenz
+    private string _licenseKey = "";
+    private string? _licenseMessage;
+    private bool _licenseSuccess;
+    private bool _activatingLicense;
+
+    private async Task ActivateLicense()
+    {
+        if (string.IsNullOrWhiteSpace(_licenseKey)) return;
+        _activatingLicense = true; _licenseMessage = null; StateHasChanged();
+        try
+        {
+            var result = await Api.ActivateLicenseAsync(_licenseKey.Trim());
+            if (result.Success)
+            {
+                _licenseSuccess = true;
+                _licenseMessage = "Lizenz aktiviert — paperLeo Pro ist jetzt freigeschaltet!";
+                _settings.PremiumLicenseKey = _licenseKey.Trim();
+                await Save();
+            }
+            else
+            {
+                _licenseSuccess = false;
+                _licenseMessage = result.Message ?? "Ungültiger Lizenzschlüssel.";
+            }
+        }
+        catch { _licenseSuccess = false; _licenseMessage = "Verbindungsfehler bei der Lizenzprüfung."; }
+        _activatingLicense = false; StateHasChanged();
+    }
+
+    private async Task DeactivateLicense()
+    {
+        _settings.PremiumLicenseKey = "";
+        _licenseKey = "";
+        _licenseMessage = "Lizenz deaktiviert.";
+        _licenseSuccess = false;
+        await Save();
+    }
+
+    private bool _promptContainsPersonalData;
+    private string? _importMessage;
+
+    private bool _loadingFields, _creatingField;
+    private string _newFieldName = "", _newFieldType = "string";
+    private string? _createFieldMessage;
+    private List<CustomFieldDto> _customFields = new();
+    private BackfillProgress? _backfillProgress;
+    private System.Threading.Timer? _backfillTimer;
+
+    // Prompt-Assistent Records
+    public record AssistPerson(string Name, string Role);
+    public record AssistAddress(string Kurzname, string Adresse, bool IsMietobjekt);
+    public record AssistVehicle(string Modell, string Kennzeichen, bool IsLeasing);
+
+    // Prompt-Assistent State
+    private int _promptStep = 1;
+    private string _promptStepLabel => _promptStep switch {
+        1 => "Setup-Check", 2 => "Personen", 3 => "Adressen",
+        4 => "Fahrzeuge", 5 => "Steuer & Finanzen", 6 => "Verträge & Behörden", _ => "Ergebnis"
+    };
+    private List<AssistPerson> _assistPersons = new() { new AssistPerson(string.Empty, "Hauptnutzer") };
+    private List<AssistAddress> _assistAddresses = new() { new AssistAddress(string.Empty, string.Empty, false) };
+    private List<AssistVehicle> _assistVehicles = new();
+    private string _promptCurrency = "EUR";
+    private string _promptInvoiceFormats = "";
+    private string _generatedPrompt = "";
+    private bool _promptSaved;
+    private bool _creatingMissingFields;
+    private string _setupMessage = "";
+    private List<string> _cfNames = new();
+
+    // Steuer-Checkboxen
+    private bool _taxHandwerker = true;
+    private bool _taxWerbungskosten = true;
+    private bool _taxSpenden = false;
+    private bool _taxKirche = false;
+    private bool _taxVermietung = true;
+    private bool _taxVersicherung = false;
+
+    private string BuildTaxRulePreview()
+    {
+        var parts = new List<string>();
+        if (_taxHandwerker)    parts.Add("Handwerker-Rechnung im Haushalt");
+        if (_taxWerbungskosten) parts.Add("Arbeitsmittel/Homeoffice");
+        if (_taxVermietung)    parts.Add("Mietobjekt-Kosten/-Einnahmen");
+        if (_taxVersicherung)  parts.Add("Versicherungsbeitrag");
+        if (_taxSpenden)       parts.Add("Spendenquittung");
+        if (_taxKirche)        parts.Add("Kirchensteuerbescheid");
+        return parts.Any() ? string.Join(" ODER ", parts) : "(keine Regeln definiert)";
+    }
+
+    private string BuildTaxCategories()
+    {
+        var cats = new List<string>();
+        if (_taxHandwerker)    cats.Add("Handwerkerleistungen §35a EStG");
+        if (_taxWerbungskosten) cats.Add("Werbungskosten / berufliche Ausgaben");
+        if (_taxSpenden)       cats.Add("Spenden / Zuwendungen");
+        if (_taxKirche)        cats.Add("Kirchensteuer");
+        if (_taxVermietung)    cats.Add("Vermietungskosten und -einnahmen");
+        if (_taxVersicherung)  cats.Add("Versicherungsbeiträge");
+        return string.Join(", ", cats);
+    }
+
+    private void AddPerson() => _assistPersons.Add(new AssistPerson(string.Empty, "Hauptnutzer"));
+    private void AddAddress() => _assistAddresses.Add(new AssistAddress(string.Empty, string.Empty, false));
+    private void AddVehicle() => _assistVehicles.Add(new AssistVehicle(string.Empty, string.Empty, false));
+    private void UpdatePersonName(int i, string v) { if(i<_assistPersons.Count) _assistPersons[i] = _assistPersons[i] with { Name = v }; }
+    private void UpdatePersonRole(int i, string v) { if(i<_assistPersons.Count) _assistPersons[i] = _assistPersons[i] with { Role = v }; }
+    private void UpdateAddressKurzname(int i, string v) { if(i<_assistAddresses.Count) _assistAddresses[i] = _assistAddresses[i] with { Kurzname = v }; }
+    private void UpdateAddressAdresse(int i, string v) { if(i<_assistAddresses.Count) _assistAddresses[i] = _assistAddresses[i] with { Adresse = v }; }
+    private void UpdateAddressType(int i, string? v) { if(i<_assistAddresses.Count) _assistAddresses[i] = _assistAddresses[i] with { IsMietobjekt = v == "Mietobjekt" }; }
+    private void UpdateVehicleModell(int i, string v) { if(i<_assistVehicles.Count) _assistVehicles[i] = _assistVehicles[i] with { Modell = v }; }
+    private void UpdateVehicleKennzeichen(int i, string v) { if(i<_assistVehicles.Count) _assistVehicles[i] = _assistVehicles[i] with { Kennzeichen = v }; }
+    private void UpdateVehicleLeasing(int i, bool v) { if(i<_assistVehicles.Count) _assistVehicles[i] = _assistVehicles[i] with { IsLeasing = v }; }
+
+    private static readonly string[] KnownFields = { "Rechnungsnummer","Belegnummer","Rechnungsbetrag","Seriennummer","Fahrzeug","Gewerk_Dienstleistung","Objekt / Adresse","Familienmitglied","Vertragsende / Laufzeit bis","Vertragsnummer / Kundennummer","Fälligkeitsdatum","Steuer","Mietobjekt" };
+    private static readonly string[] RequiredFields = { "Steuer","Mietobjekt","Rechnungsbetrag","Rechnungsnummer","Belegnummer","Seriennummer","Fahrzeug","Vertragsnummer","Vertragsende","Fälligkeitsdatum","Gewerk_Dienstleistung","Objekt / Adresse","Familienmitglied" };
+    private int SetupFound => RequiredFields.Count(r => _cfNames.Any(n => string.Equals(n,r,StringComparison.OrdinalIgnoreCase)));
+    private List<string> SetupMissing => RequiredFields.Where(r => !_cfNames.Any(n => string.Equals(n,r,StringComparison.OrdinalIgnoreCase))).ToList();
+    private int SetupPct => RequiredFields.Length > 0 ? (int)(SetupFound * 100.0 / RequiredFields.Length) : 100;
+
+    private bool QPersons => _assistPersons.Any(p => !string.IsNullOrWhiteSpace(p.Name));
+    private bool QAddresses => _assistAddresses.Any(a => !string.IsNullOrWhiteSpace(a.Adresse));
+    private bool QTax => _taxHandwerker || _taxWerbungskosten || _taxVermietung || _taxVersicherung || _taxSpenden || _taxKirche;
+    private bool QCF => _cfNames.Count >= 10;
+    private int QScorePct => new[] {QPersons, QAddresses, QTax, QCF}.Count(x => x) * 25;
+
+    private void AdvancePromptStep()
+    {
+        if (_promptStep == 6) BuildPrompt();
+        _promptStep++;
+    }
+
+    private void BuildPrompt()
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("Du bist ein präziser KI-Archivar für ein deutsches Privatarchiv. Deine Aufgabe ist die vollständige Metadatenextraktion aus Dokumenten.");
+        sb.AppendLine();
+        sb.AppendLine("AUSGABE: Antworte AUSSCHLIESSLICH mit einem validen JSON-Objekt. Kein Text davor oder danach. Kein Markdown.");
+        sb.AppendLine();
+        sb.AppendLine("JSON-SCHEMA (alle Felder immer ausgeben, fehlende Werte als null):");
+        sb.AppendLine("{");
+        sb.AppendLine("  \"title\": \"Prägnanter Dokumenttitel (max. 60 Zeichen, deutsch)\",");
+        sb.AppendLine("  \"created\": \"YYYY-MM-DD oder null\",");
+        sb.AppendLine("  \"correspondent\": \"Markenname ohne Rechtsform (GmbH/AG/e.V. weglassen) oder null\",");
+        sb.AppendLine("  \"document_type\": \"Aus Liste [document_types] wählen oder null\",");
+        sb.AppendLine("  \"tags\": [\"Aus Liste [tags] wählen\"],");
+        sb.AppendLine("  \"custom_fields\": {");
+        sb.AppendLine("    \"Rechnungsnummer\": \"String oder null\",");
+        sb.AppendLine("    \"Belegnummer\": \"String oder null\",");
+        sb.AppendLine("    \"Rechnungsbetrag\": \"Zahl mit Punkt als Dezimaltrennzeichen z.B. 1234.56 oder null\",");
+        sb.AppendLine("    \"Seriennummer\": \"String oder null\",");
+        sb.AppendLine("    \"Fahrzeug\": \"Marke Modell (Kennzeichen) oder null\",");
+        sb.AppendLine("    \"Gewerk_Dienstleistung\": \"Art der Handwerksleistung oder null\",");
+        sb.AppendLine("    \"Objekt / Adresse\": \"Adresse aus ADRESSEN-Liste oder null\",");
+        sb.AppendLine("    \"Familienmitglied\": \"Name aus PERSONEN-Liste oder null\",");
+        sb.AppendLine("    \"Vertragsende\": \"YYYY-MM-DD oder null\",");
+        sb.AppendLine("    \"Vertragsnummer\": \"String oder null\",");
+        sb.AppendLine("    \"Fälligkeitsdatum\": \"YYYY-MM-DD oder null\",");
+        sb.AppendLine("    \"Steuer\": true/false,");
+        sb.AppendLine("    \"Mietobjekt\": true/false");
+        sb.AppendLine("  }");
+        sb.AppendLine("}");
+        sb.AppendLine();
+        sb.AppendLine("KORRESPONDENTEN-REGELN:");
+        sb.AppendLine("- Immer Markenname, nie Rechtsform: 'Telekom' nicht 'Deutsche Telekom GmbH'");
+        sb.AppendLine("- Behörden vollständig: 'Finanzamt Remagen', 'Krankenkasse TK'");
+        sb.AppendLine("- Unbekannter Absender: null (nicht raten)");
+        sb.AppendLine();
+        sb.AppendLine("TITEL-REGELN:");
+        sb.AppendLine("- Format: [Korrespondent] – [Dokumentart] [Datum/Zeitraum]");
+        sb.AppendLine("- Beispiele: 'Telekom – Rechnung Jan 2025', 'Finanzamt – Steuerbescheid 2024'");
+        sb.AppendLine("- Max. 60 Zeichen, deutsch, keine Abkürzungen");
+        sb.AppendLine();
+        sb.AppendLine("DATUM-REGELN:");
+        sb.AppendLine("- Immer ISO 8601: YYYY-MM-DD");
+        sb.AppendLine("- Dokumentdatum = Ausstellungsdatum, nicht Scanndatum");
+        sb.AppendLine("- Vertragsende = letzter Gültigkeitstag");
+        sb.AppendLine();
+        sb.AppendLine("PRIORISIERUNG bei Mehrdeutigkeit:");
+        sb.AppendLine("- Steuer=true hat Vorrang wenn Dokument EINDEUTIG steuerrelevant ist");
+        sb.AppendLine("- Mietobjekt=true nur wenn Adresse EXAKT einer Mietobjekt-Adresse entspricht");
+        sb.AppendLine("- Tags: max. 5, nur wenn eindeutig zutreffend");
+        sb.AppendLine();
+        sb.AppendLine();
+
+        var persons = _assistPersons.Where(p => !string.IsNullOrWhiteSpace(p.Name)).ToList();
+        if (persons.Any())
+        {
+            sb.AppendLine("PERSONEN (für Feld family_member):");
+            foreach (var p in persons)
+                sb.AppendLine($"- {p.Name} ({p.Role})");
+            var primary = persons.FirstOrDefault(p => p.Role == "Hauptnutzer");
+            if (primary != null) sb.AppendLine($"Primärnutzer: {primary.Name}");
+            sb.AppendLine();
+        }
+
+        var addresses = _assistAddresses.Where(a => !string.IsNullOrWhiteSpace(a.Adresse)).ToList();
+        if (addresses.Any())
+        {
+            sb.AppendLine("ADRESSEN (für Feld property_address und Mietobjekt-Erkennung):");
+            foreach (var a in addresses)
+                sb.AppendLine($"- {a.Kurzname}: {a.Adresse} → {(a.IsMietobjekt ? "Mietobjekt = ja, Kosten steuerrelevant" : "Privatbesitz")}");
+            sb.AppendLine();
+        }
+
+        var vehicles = _assistVehicles.Where(v => !string.IsNullOrWhiteSpace(v.Modell)).ToList();
+        if (vehicles.Any())
+        {
+            sb.AppendLine("FAHRZEUGE:");
+            foreach (var v in vehicles)
+                sb.AppendLine($"- {v.Modell}{(string.IsNullOrWhiteSpace(v.Kennzeichen) ? "" : $" ({v.Kennzeichen})")}{(v.IsLeasing ? " [Leasing]" : "")}");
+            sb.AppendLine();
+        }
+
+        var taxRules = new List<string>();
+        if (_taxHandwerker)    taxRules.Add("Handwerkerleistungen im Privathaushalt (§35a EStG) + Rechnung");
+        if (_taxWerbungskosten) taxRules.Add("Arbeitsmittel, Homeoffice, Fortbildung");
+        if (_taxVermietung)    taxRules.Add("Kosten oder Einnahmen für Mietobjekte");
+        if (_taxVersicherung)  taxRules.Add("Kranken-, Lebens- oder Rentenversicherungsbeiträge");
+        if (_taxSpenden)       taxRules.Add("Spendenquittungen und Zuwendungsbestätigungen");
+        if (_taxKirche)        taxRules.Add("Kirchensteuerbescheide");
+        taxRules.Add("Steuerbescheide direkt vom Finanzamt");
+        sb.AppendLine("STEUER-REGELN (Feld is_tax_relevant = true WENN):");
+        foreach (var r in taxRules) sb.AppendLine($"- {r}");
+        sb.AppendLine($"BETRÄGE: Währung {_promptCurrency}, Format: 1234.56 (Punkt, 2 Dezimalstellen)");
+        sb.AppendLine();
+
+        var vts = new List<string>();
+        if (_vtStrom) vts.Add("Strom/Gas"); if (_vtInternet) vts.Add("Internet/Telefon");
+        if (_vtVers) vts.Add("Versicherungen"); if (_vtKV) vts.Add("Krankenversicherung");
+        if (_vtMiete) vts.Add("Mietverträge"); if (_vtLeasing) vts.Add("Leasing/Kredit");
+        if (_vtAlters) vts.Add("Altersvorsorge"); if (_vtWartung) vts.Add("Wartungsverträge");
+        if (vts.Any()) sb.AppendLine($"VERTRAGSTYPEN (verbessert Laufzeit-Erkennung): {string.Join(", ", vts)}");
+
+        var bhs = new List<string>();
+        if (_bhFinanz) bhs.Add("Finanzamt"); if (_bhKK) bhs.Add("Krankenkasse");
+        if (_bhRente) bhs.Add("Rentenversicherung"); if (_bhStadt) bhs.Add("Stadtverwaltung");
+        if (_bhGericht) bhs.Add("Gericht/Notar"); if (_bhIHK) bhs.Add("Handwerkskammer/IHK");
+        if (bhs.Any()) sb.AppendLine($"BEHÖRDEN: {string.Join(", ", bhs)}");
+        if (!string.IsNullOrWhiteSpace(_bhDienstleister))
+            sb.AppendLine($"DIENSTLEISTER: {_bhDienstleister}");
+
+        sb.AppendLine();
+        sb.AppendLine("Tags: [tags]");
+        sb.AppendLine("Dokumenttypen: [document_types]");
+        _generatedPrompt = sb.ToString().Trim();
+    }
+
+    private async Task SaveGeneratedPrompt()
+    {
+        _settings.CustomSystemPrompt = _generatedPrompt;
+        await Save();
+        _promptSaved = true;
+    }
+
+
+    // Beruf-Variablen (nicht mehr im UI, aber für BuildPrompt-Kompatibilität)
+    private bool _jobAngestellt = true;
+    private bool _jobSelbst, _jobRente, _jobStudent;
+    private string _promptCompany = "";
+    private string _promptHomeoffice = "nein";
+
+    // Schritt 5: Verträge
+    private bool _vtStrom = true, _vtInternet = true, _vtVers = true, _vtKV = true;
+    private bool _vtMiete = true, _vtLeasing, _vtAlters, _vtWartung;
+
+    // Schritt 6: Behörden
+    private bool _bhFinanz = true, _bhKK = true, _bhRente, _bhStadt = true, _bhGericht, _bhIHK;
+    private string _bhDienstleister = "";
+
+    private List<CorrespondentMergeSuggestion> _mergeSuggestions = new();
+    private HashSet<int> _mergingIdx = new();
+    private Dictionary<int, MergeResult> _mergeResults = new();
+
+    private bool _resetting, _fullResetting, _deletingTags, _deletingDocTypes, _deletingCorrespondents;
+    private IndexResetResult? _resetResult;
+    private FullResetResult? _fullResetResult;
+    private DeleteAllResult? _deleteTagsResult, _deleteDocTypesResult, _deleteCorrespondentsResult;
+
+    // ConfirmDialog-Refs für Löschaktionen
+    private ConfirmDialog? _confirmTags, _confirmDocTypes, _confirmCorrespondents, _confirmFullReset, _confirmResetIndex;
+
+    private string WebhookUrl => Nav.BaseUri.TrimEnd('/') + "/api/webhook/paperless";
+
+    private async Task Retry()
+    {
+        _loading = true; _loadError = null; StateHasChanged();
+        await OnInitializedAsync();
+    }
+
+    protected override void OnInitialized()
+    {
+        SettingsTabState.OnChanged += async () =>
+        {
+            // Custom Fields nur beim Öffnen des Prompt-Assistenten nachladen
+            if (SettingsTabState.ActiveTab == "Prompt-Assistent")
+                LoadCfNames();
+            await InvokeAsync(StateHasChanged);
+        };
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _settings = await Api.GetSettingsAsync();
+            try { var s = await Api.GetStatusAsync(); _proMode = s.ProMode; } catch { }
+
+            // Community-Modus: Vokabular immer auf Demo-Defaults zurücksetzen
+            if (!_proMode)
+            {
+                _settings.DefaultTagVocabulary = "Rechnung, Vertrag, Privat, Arbeit, Sonstiges";
+                _settings.DefaultDocumentTypeVocabulary = "Rechnung, Vertrag, Anschreiben, Bescheid, Sonstiges";
+            }
+        }
+        catch (Exception ex)
+        {
+            _loadError = $"Einstellungen konnten nicht geladen werden: {ex.Message}";
+        }
+        finally
+        {
+            _ = LoadCustomFields();
+        await LoadCfNamesAsync();
+        _loading = false;
+        }
+    }
+
+    private async Task CreateMissingFieldsAsync()
+    {
+        _creatingMissingFields = true; _setupMessage = ""; StateHasChanged();
+        var requiredFields = new[] {
+            ("Steuer","boolean"),("Mietobjekt","boolean"),("Rechnungsbetrag","monetary"),
+            ("Rechnungsnummer","string"),("Belegnummer","string"),("Seriennummer","string"),
+            ("Fahrzeug","string"),("Vertragsnummer","string"),("Vertragsende","date"),
+            ("Fälligkeitsdatum","date"),("Gewerk_Dienstleistung","string"),
+            ("Objekt / Adresse","string"),("Familienmitglied","string")
+        };
+        int created = 0;
+        foreach (var (name, type) in requiredFields)
+        {
+            if (!_cfNames.Any(n => string.Equals(n, name, StringComparison.OrdinalIgnoreCase)))
+            {
+                var (ok, _) = await Api.CreateCustomFieldAsync(name, type);
+                if (ok) created++;
+            }
+        }
+        await LoadCfNamesAsync();
+        _setupMessage = created > 0 ? $"{created} Felder angelegt." : "Alle Felder bereits vorhanden.";
+        _creatingMissingFields = false;
+    }
+
+    private async Task LoadCfNamesAsync()
+    {
+        // 1. Zuerst aus Paperless-API laden (direkt, unabhängig von lokaler Einstellungsliste)
+        try
+        {
+            var fields = await Api.GetCustomFieldsAsync();
+            if (fields?.Count > 0)
+            {
+                _cfNames = fields.Select(f => f.Name).ToList();
+                return;
+            }
+        }
+        catch { }
+        // 2. Fallback: lokale Einstellungsliste
+        _cfNames = (_settings.EnabledCustomFieldNames ?? "")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToList();
+    }
+    private void LoadCfNames() => _ = LoadCfNamesAsync();
+
+    private string _activeProvider = "gemini";
+
+    public record ProviderDef(string Key, string Label, string Icon, string ApiBase, string DefaultModel, string Provider);
+    private static readonly ProviderDef[] _providers = new ProviderDef[]
+    {
+        new ProviderDef("gemini",     "Google Gemini",  """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;" aria-hidden="true"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>""",
+              "https://generativelanguage.googleapis.com/v1beta/openai/", "gemini-2.5-flash", "custom"),
+        new ProviderDef("openai",     "OpenAI",         """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>""",
+              "https://api.openai.com/v1", "gpt-4o-mini", "openai"),
+        new ProviderDef("deepseek",   "DeepSeek",       """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>""",
+              "https://api.deepseek.com/v1", "deepseek-chat", "custom"),
+        new ProviderDef("openrouter", "OpenRouter",     """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;" aria-hidden="true"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>""",
+              "https://openrouter.ai/api/v1", "openai/gpt-4o-mini", "custom"),
+        new ProviderDef("perplexity", "Perplexity",     """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>""",
+              "https://api.perplexity.ai", "llama-3.1-sonar-small-128k-online", "custom"),
+        new ProviderDef("together",   "Together.ai",    """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>""",
+              "https://api.together.xyz/v1", "meta-llama/Llama-3-8b-chat-hf", "custom"),
+        new ProviderDef("litellm",    "LiteLLM",        """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>""",
+              "http://localhost:4000/v1", "gpt-3.5-turbo", "custom"),
+        new ProviderDef("vllm",       "vLLM",           """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>""",
+              "http://localhost:8000/v1", "mistralai/Mistral-7B-Instruct-v0.1", "custom"),
+        new ProviderDef("fastchat",   "Fastchat",       """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>""",
+              "http://localhost:21001/v1", "vicuna-7b-v1.5", "custom"),
+        new ProviderDef("ollama",     "Ollama",         """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;" aria-hidden="true"><path d="M8 3c0 0-2 2-2 6s2 7 2 7H6l-2 5h4l1-3h6l1 3h4l-2-5h-2s2-3 2-7-2-6-2-6"/></svg>""",
+              "http://localhost:11434/v1", "llama3.1", "ollama"),
+    };
+
+    private void ApplyPreset(string p)
+    {
+        var preset = _providers.FirstOrDefault(x => x.Key == p);
+        if (preset is null) return;
+        _activeProvider = p;
+        _settings.LlmProvider = preset.Provider;
+        _settings.LlmModel = preset.DefaultModel;
+        _settings.LlmApiBase = preset.ApiBase;
+    }
+
+    private async Task Save()
+    {
+        _saving = true; _savedMessage = null; StateHasChanged();
+        // Community-Modus: Vokabular immer auf Defaults zurücksetzen, egal was im UI steht
+        if (!_proMode)
+        {
+            _settings.DefaultTagVocabulary = "Rechnung, Vertrag, Privat, Arbeit, Sonstiges";
+            _settings.DefaultDocumentTypeVocabulary = "Rechnung, Vertrag, Anschreiben, Bescheid, Sonstiges";
+        }
+        await Api.SaveSettingsAsync(_settings);
+        _savedMessage = "Gespeichert ✓"; _saving = false;
+        await Task.Delay(2500); _savedMessage = null;
+    }
+
+    private async Task TestPaperless() { _testingPaperless = true; _paperlessTestResult = await Api.TestPaperlessAsync(_settings); _testingPaperless = false; }
+    private async Task TestLlm() { _testingLlm = true; _llmTestResult = await Api.TestLlmAsync(_settings); _testingLlm = false; }
+
+    private async Task ImportTagsFromPaperless()
+    {
+        if (!_proMode) return; // Community: kein Import erlaubt
+        _importingTagsFromPaperless = true; StateHasChanged();
+        var result = await Api.ImportTagsFromPaperlessAsync();
+        if (result.Success && !string.IsNullOrEmpty(result.SuggestedVocabulary))
+        {
+            _settings.DefaultTagVocabulary = result.SuggestedVocabulary;
+            _suggestTagsResult = new SuggestVocabularyResult { Success = true, Message = $"✓ {result.DocumentsAnalyzed} Tags aus Paperless importiert", SuggestedVocabulary = result.SuggestedVocabulary };
+        }
+        else { _suggestTagsResult = new SuggestVocabularyResult { Success = false, Message = result.Message ?? "Fehler beim Import" }; }
+        _importingTagsFromPaperless = false;
+    }
+    private async Task ImportDocTypesFromPaperless()
+    {
+        if (!_proMode) return; // Community: kein Import erlaubt
+        _importingDocTypesFromPaperless = true; StateHasChanged();
+        var result = await Api.ImportDocTypesFromPaperlessAsync();
+        if (result.Success && !string.IsNullOrEmpty(result.SuggestedVocabulary))
+        {
+            _settings.DefaultDocumentTypeVocabulary = result.SuggestedVocabulary;
+            _suggestDocTypesResult = new SuggestVocabularyResult { Success = true, Message = $"✓ {result.DocumentsAnalyzed} Dokumenttypen aus Paperless importiert", SuggestedVocabulary = result.SuggestedVocabulary };
+        }
+        else { _suggestDocTypesResult = new SuggestVocabularyResult { Success = false, Message = result.Message ?? "Fehler beim Import" }; }
+        _importingDocTypesFromPaperless = false;
+    }
+
+    private async Task SuggestTags()
+    {
+        if (!_proMode) return; // Community: kein KI-Vorschlag erlaubt
+        _suggestingTags = true; _suggestTagsResult = await Api.SuggestTagsAsync();
+        if (_suggestTagsResult?.Success == true && !string.IsNullOrEmpty(_suggestTagsResult.SuggestedVocabulary)) _settings.DefaultTagVocabulary = _suggestTagsResult.SuggestedVocabulary;
+        _suggestingTags = false;
+    }
+
+    private async Task SuggestDocumentTypes()
+    {
+        if (!_proMode) return; // Community: kein KI-Vorschlag erlaubt
+        _suggestingDocTypes = true; _suggestDocTypesResult = await Api.SuggestDocumentTypesAsync();
+        if (_suggestDocTypesResult?.Success == true && !string.IsNullOrEmpty(_suggestDocTypesResult.SuggestedVocabulary)) _settings.DefaultDocumentTypeVocabulary = _suggestDocTypesResult.SuggestedVocabulary;
+        _suggestingDocTypes = false;
+    }
+
+    private async Task SeedTags() { _seedingTags = true; _seedTagsResult = await Api.SeedTagsAsync(); _seedingTags = false; }
+    private async Task SeedDocumentTypes() { _seedingDocTypes = true; _seedDocTypesResult = await Api.SeedDocumentTypesAsync(); _seedingDocTypes = false; }
+
+    private void ClearPersonalData() { _settings.CustomSystemPrompt = null; _promptContainsPersonalData = false; }
+
+    private async Task ExportConfig()
+    {
+        var e = new { _settings.ProcessedTagName, _settings.PollIntervalSeconds, _settings.AutoModeEnabled, _settings.EnableTagsAssignment, _settings.EnableCorrespondentDetection, _settings.EnableDocumentTypeClassification, _settings.EnableTitleGeneration, _settings.UseExistingCorrespondentsOnly, _settings.UseExistingDocumentTypesOnly, _settings.UseExistingTagsOnly, _settings.EnableCustomFields, _settings.DefaultTagVocabulary, _settings.DefaultDocumentTypeVocabulary, _settings.EnabledCustomFieldNames, _settings.CustomSystemPrompt, _settings.LlmTemperature, _settings.LlmMaxTokens, _settings.LlmProvider, _settings.LlmModel, _settings.LlmApiBase, exportedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm") };
+        var json = System.Text.Json.JsonSerializer.Serialize(e, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        await JS.InvokeVoidAsync("downloadFile", "paperleo-config.json", "application/json", Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(json)));
+    }
+
+    private async Task ImportConfig(Microsoft.AspNetCore.Components.ChangeEventArgs ev)
+    {
+        _importMessage = null;
+        try
+        {
+            if (ev.Value is not Microsoft.AspNetCore.Components.Forms.IBrowserFile f) return;
+            using var stream = f.OpenReadStream(512 * 1024);
+            using var reader = new System.IO.StreamReader(stream);
+            using var doc = System.Text.Json.JsonDocument.Parse(await reader.ReadToEndAsync());
+            var r = doc.RootElement;
+            void S(string p, Action<string?> a) { if (r.TryGetProperty(p, out var v)) a(v.ValueKind == System.Text.Json.JsonValueKind.String ? v.GetString() : null); }
+            void B(string p, Action<bool> a) { if (r.TryGetProperty(p, out var v) && v.ValueKind is System.Text.Json.JsonValueKind.True or System.Text.Json.JsonValueKind.False) a(v.GetBoolean()); }
+            void I(string p, Action<int> a) { if (r.TryGetProperty(p, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.Number) a(v.GetInt32()); }
+            S("processedTagName", v => _settings.ProcessedTagName = v ?? _settings.ProcessedTagName);
+            S("defaultTagVocabulary", v => _settings.DefaultTagVocabulary = v);
+            S("defaultDocumentTypeVocabulary", v => _settings.DefaultDocumentTypeVocabulary = v);
+            S("customSystemPrompt", v => _settings.CustomSystemPrompt = v);
+            S("enabledCustomFieldNames", v => _settings.EnabledCustomFieldNames = v);
+            S("llmProvider", v => _settings.LlmProvider = v ?? _settings.LlmProvider);
+            S("llmModel", v => _settings.LlmModel = v ?? _settings.LlmModel);
+            S("llmApiBase", v => _settings.LlmApiBase = v);
+            B("autoModeEnabled", v => _settings.AutoModeEnabled = v);
+            B("enableTagsAssignment", v => _settings.EnableTagsAssignment = v);
+            B("enableCorrespondentDetection", v => _settings.EnableCorrespondentDetection = v);
+            B("enableDocumentTypeClassification", v => _settings.EnableDocumentTypeClassification = v);
+            B("enableTitleGeneration", v => _settings.EnableTitleGeneration = v);
+            B("enableCustomFields", v => _settings.EnableCustomFields = v);
+            B("useExistingCorrespondentsOnly", v => _settings.UseExistingCorrespondentsOnly = v);
+            B("useExistingDocumentTypesOnly", v => _settings.UseExistingDocumentTypesOnly = v);
+            B("useExistingTagsOnly", v => _settings.UseExistingTagsOnly = v);
+            I("pollIntervalSeconds", v => _settings.PollIntervalSeconds = v);
+            I("llmMaxTokens", v => _settings.LlmMaxTokens = v);
+            if (r.TryGetProperty("llmTemperature", out var t)) _settings.LlmTemperature = t.GetDouble();
+            _importMessage = "Importiert – bitte speichern.";
+        }
+        catch (Exception ex) { _importMessage = $"❌ {ex.Message}"; }
+    }
+
+    private void ToggleCustomField(string n, bool on)
+    {
+        var set = (_settings.EnabledCustomFieldNames ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (set.Count == 0) set = _customFields.Select(f => f.Name).Where(x => !string.Equals(x, n, StringComparison.OrdinalIgnoreCase)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        else if (on) set.Add(n); else set.Remove(n);
+        _settings.EnabledCustomFieldNames = set.Count == _customFields.Count ? "" : string.Join(", ", set);
+    }
+
+    private async Task LoadCustomFields() { _loadingFields = true; StateHasChanged(); _customFields = await Api.GetCustomFieldsAsync(); _loadingFields = false; }
+
+    private async Task CreateCustomField()
+    {
+        if (string.IsNullOrWhiteSpace(_newFieldName)) return;
+        _creatingField = true; _createFieldMessage = null; StateHasChanged();
+        var (ok, msg) = await Api.CreateCustomFieldAsync(_newFieldName.Trim(), _newFieldType);
+        _createFieldMessage = ok ? $"\"{_newFieldName}\" angelegt." : $"❌ {msg}";
+        if (ok) { _newFieldName = ""; await LoadCustomFields(); }
+        _creatingField = false;
+    }
+
+    private async Task StartBackfill()
+    {
+        await Api.BackfillCustomFieldsAsync();
+        _backfillProgress = new BackfillProgress { IsRunning = true };
+        StateHasChanged();
+        // Polling alle 1.5s
+        _backfillTimer?.Dispose();
+        _backfillTimer = new System.Threading.Timer(async _ =>
+        {
+            var progress = await Api.GetBackfillProgressAsync();
+            if (progress is not null) _backfillProgress = progress;
+            await InvokeAsync(StateHasChanged);
+            if (progress?.IsRunning == false) { _backfillTimer?.Dispose(); _backfillTimer = null; }
+        }, null, 1500, 1500);
+    }
+
+    private Task SuggestMerges() => Task.CompletedTask; // deaktiviert
+    private async Task ConfirmMerge(int idx, CorrespondentMergeSuggestion s) { _mergingIdx.Add(idx); StateHasChanged(); _mergeResults[idx] = await Api.MergeCorrespondentsAsync(s.PrimaryName, s.Aliases); _mergingIdx.Remove(idx); }
+    private void DismissMerge(int idx) { if (idx < _mergeSuggestions.Count) _mergeSuggestions.RemoveAt(idx); }
+    private void DismissAllMerges() { _mergeSuggestions.Clear(); _mergeResults.Clear(); }
+
+    private async Task DeleteAllTags() { _deletingTags = true; _deleteTagsResult = await Api.DeleteAllTagsAsync(); _deletingTags = false; }
+    private async Task DeleteAllDocumentTypes() { _deletingDocTypes = true; _deleteDocTypesResult = await Api.DeleteAllDocumentTypesAsync(); _deletingDocTypes = false; }
+    private async Task DeleteAllCorrespondents() { _deletingCorrespondents = true; _deleteCorrespondentsResult = await Api.DeleteAllCorrespondentsAsync(); _deletingCorrespondents = false; }
+    private async Task FullReset() { _fullResetting = true; _fullResetResult = await Api.FullResetAsync(); _fullResetting = false; }
+    private async Task ResetIndex() { _resetting = true; _resetResult = await Api.ResetIndexAsync(); _resetting = false; }
+
+    // Callbacks vom ConfirmDialog
+    private async Task DeleteAllTagsConfirmed() => await DeleteAllTags();
+    private async Task DeleteAllDocTypesConfirmed() => await DeleteAllDocumentTypes();
+    private async Task DeleteAllCorrespondentsConfirmed() => await DeleteAllCorrespondents();
+    private async Task FullResetConfirmed() => await FullReset();
+    private async Task ResetIndexConfirmed() => await ResetIndex();
+}

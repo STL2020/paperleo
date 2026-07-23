@@ -1,0 +1,34 @@
+# Build-Ausgaben
+**/bin/
+**/obj/
+**/publish/
+
+# Lokale Einstellungen & Secrets — NIEMALS in Git einchecken
+data/
+*.env
+!.env.example
+.env.local
+
+# Laufzeit-Logs
+*.log
+*.jsonl
+
+# IDE
+.vs/
+.vscode/
+*.user
+*.suo
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# NuGet
+*.nupkg
+.nuget/
+
+# Docker lokale Overrides
+docker-compose.override.yml
+docker-compose.local.yml
