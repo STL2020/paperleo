@@ -3,14 +3,16 @@ using PaperlessAiCore.Core.DependencyInjection;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Working Directory auf Solution-Root setzen, damit data/settings.env immer unter
-// <SolutionRoot>/data/ landet - unabhängig davon ob dotnet run, dotnet publish
-// oder Docker gestartet wird. Sucht von AppContext.BaseDirectory aufwärts nach *.sln.
+// Working Directory nur anpassen wenn kein expliziter CONFIG_PATH gesetzt ist
+// (Docker setzt CONFIG_PATH=/app/data/settings.env → kein sln-Suche nötig)
+// Bei dotnet run lokal: keine CONFIG_PATH env var → sln-Suche greift
+if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("CONFIG_PATH")))
 {
     var dir = new DirectoryInfo(AppContext.BaseDirectory);
-    while (dir != null && !dir.GetFiles("*.sln").Any())
+    var limit = 0;
+    while (dir != null && !dir.GetFiles("*.sln").Any() && limit++ < 10)
         dir = dir.Parent;
-    if (dir != null)
+    if (dir != null && dir.GetFiles("*.sln").Any())
         Directory.SetCurrentDirectory(dir.FullName);
 }
 

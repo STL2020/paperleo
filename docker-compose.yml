@@ -1,38 +1,21 @@
-# paperLeo — docker-compose.yml
-# Dokumentation: https://github.com/STL2020/paperleo
-#
-# Schnellstart:
-#   docker compose up -d
-#   → http://localhost:5080
-#
-# Das ./data-Volume enthält alle Einstellungen (settings.env) und das
-# Aktivitätslog (activity.jsonl). Sichere dieses Verzeichnis regelmäßig.
-
+# ============================================================================
+# Standalone Self-Hosted Betrieb: ein Container, Konfiguration als lesbare
+# .env-Datei im data-Volume (kein Datenbank-Server nötig).
+#   docker compose up --build
+#   -> http://localhost:8080  (Setup-Wizard führt durch die Erstkonfiguration)
+# ============================================================================
 services:
-  paperleo:
-    image: ghcr.io/stl2020/paperleo:latest
-    container_name: paperleo
+  app:
+    build:
+      context: .
+      dockerfile: src/PaperlessAiCore.Api/Dockerfile
     ports:
-      - "5080:8080"
-    volumes:
-      - ./data:/app/data
+      - "8080:8080"
     environment:
-      - ASPNETCORE_ENVIRONMENT=Production
-      # Optional: Pfade überschreiben (Standard: /app/data/settings.env)
-      # - ConfigPath=/app/data/settings.env
-      # - ActivityLogPath=/app/data/activity.jsonl
+      ASPNETCORE_ENVIRONMENT: Production
+    volumes:
+      - paperlessai_data:/app/data
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 15s
 
-# Alternativ: Zusammen mit Paperless-ngx im selben Netzwerk
-# Dann als Webhook-URL: http://paperleo:8080/api/webhook/document
-#
-# networks:
-#   paperless_network:
-#     external: true
-#     name: paperless-ngx_default
+volumes:
+  paperlessai_data:
