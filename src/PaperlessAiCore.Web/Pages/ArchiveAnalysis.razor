@@ -1,0 +1,233 @@
+@page "/archive-analysis"
+@inject ApiClient Api
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@using PaperlessAiCore.Web.Services
+
+<div style="max-width:900px;padding:24px;display:flex;flex-direction:column;gap:16px;">
+
+    <!-- HEADER -->
+    <div style="display:flex;align-items:center;justify-content:space-between;">
+        <div>
+            <h1 style="font-size:20px;font-weight:800;color:var(--c-text);margin:0 0 4px;">@Loc["aa.title"]</h1>
+            <p style="font-size:13px;color:var(--c-muted);margin:0;">@Loc["aa.subtitle"]</p>
+        </div>
+        @if (!_status.IsRunning && _result is null)
+        {
+            <button class="btn" @onclick="StartAnalysis" style="background:var(--c-accent);color:#fff;font-weight:700;display:flex;align-items:center;gap:8px;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px;"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                @Loc["btn.analyze"]
+            </button>
+        }
+    </div>
+
+    <!-- INFO BOX -->
+    @if (_result is null && !_status.IsRunning)
+    {
+        <div style="background:rgba(29,158,117,.06);border:1px solid rgba(29,158,117,.2);border-radius:12px;padding:20px;">
+            <p style="font-size:13px;font-weight:700;color:var(--c-text);margin:0 0 10px;">@Loc["aa.what_title"]</p>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                <div style="display:flex;gap:10px;">
+                    <div style="width:32px;height:32px;background:rgba(29,158,117,.12);border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="var(--c-accent)" stroke-width="1.8" style="width:16px;height:16px;" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                    </div>
+                    <div><p style="font-size:12px;font-weight:600;color:var(--c-text);margin:0 0 2px;">@Loc["aa.search"]</p><p style="font-size:11px;color:var(--c-muted);margin:0;line-height:1.5;">@Loc["aa.search_desc"]</p></div>
+                </div>
+                <div style="display:flex;gap:10px;">
+                    <div style="width:32px;height:32px;background:rgba(29,158,117,.12);border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="var(--c-accent)" stroke-width="1.8" style="width:16px;height:16px;" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+                    </div>
+                    <div><p style="font-size:12px;font-weight:600;color:var(--c-text);margin:0 0 2px;">@Loc["aa.extract"]</p><p style="font-size:11px;color:var(--c-muted);margin:0;line-height:1.5;">@Loc["aa.extract_desc"]</p></div>
+                </div>
+                <div style="display:flex;gap:10px;">
+                    <div style="width:32px;height:32px;background:rgba(29,158,117,.12);border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="var(--c-accent)" stroke-width="1.8" style="width:16px;height:16px;" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+                    </div>
+                    <div><p style="font-size:12px;font-weight:600;color:var(--c-text);margin:0 0 2px;">@Loc["aa.confirm"]</p><p style="font-size:11px;color:var(--c-muted);margin:0;line-height:1.5;">@Loc["aa.confirm_desc"]</p></div>
+                </div>
+                <div style="display:flex;gap:10px;">
+                    <div style="width:32px;height:32px;background:rgba(29,158,117,.12);border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="var(--c-accent)" stroke-width="1.8" style="width:16px;height:16px;" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                    </div>
+                    <div><p style="font-size:12px;font-weight:600;color:var(--c-text);margin:0 0 2px;">@Loc["aa.import"]</p><p style="font-size:11px;color:var(--c-muted);margin:0;line-height:1.5;">@Loc["aa.import_desc"]</p></div>
+                </div>
+            </div>
+            <div style="margin-top:14px;padding:10px;background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.15);border-radius:8px;">
+                <p style="font-size:11px;color:rgba(245,158,11,.9);margin:0;line-height:1.5;"><strong>@(AppLoc.Current=="de"?"Voraussetzung":"Prerequisite"):</strong> @Loc["aa.prereq"]</p>
+            </div>
+        </div>
+    }
+
+    <!-- LAUFENDE ANALYSE -->
+    @if (_status.IsRunning)
+    {
+        <div style="background:var(--c-surface);border:1px solid var(--c-border);border-radius:12px;padding:24px;text-align:center;">
+            <div class="loading-spinner" style="width:36px;height:36px;border-width:3px;margin:0 auto 16px;"></div>
+            <p style="font-size:14px;font-weight:600;color:var(--c-text);margin:0 0 6px;">@Loc["aa.running"]</p>
+            <p style="font-size:12px;color:var(--c-muted);margin:0 0 16px;">@_status.Phase</p>
+            <div style="height:8px;background:rgba(255,255,255,.06);border-radius:999px;overflow:hidden;max-width:400px;margin:0 auto;">
+                <div style="height:100%;width:@(_status.Progress)%;background:var(--c-accent);border-radius:999px;transition:width .5s;"></div>
+            </div>
+            <p style="font-size:11px;color:var(--c-muted);margin:10px 0 0;">@_status.Progress%</p>
+        </div>
+    }
+
+    <!-- FEHLER -->
+    @if (_result is not null && !_result.Success)
+    {
+        <div style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:10px;padding:16px;">
+            <p style="font-size:13px;font-weight:600;color:#ef4444;margin:0 0 4px;">@Loc["aa.failed"]</p>
+            <p style="font-size:12px;color:var(--c-muted);margin:0;">@_result.Error</p>
+            <button class="btn secondary !py-1.5 !text-sm" style="margin-top:10px;" @onclick="Reset">@Loc["btn.retry"]</button>
+        </div>
+    }
+
+    <!-- ERGEBNIS -->
+    @if (_result is not null && _result.Success)
+    {
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">
+            <div style="background:var(--c-surface);border:1px solid var(--c-border);border-radius:10px;padding:14px;text-align:center;">
+                <p style="font-size:28px;font-weight:800;color:var(--c-accent);margin:0;">@_result.DocumentsAnalyzed</p>
+                <p style="font-size:11px;color:var(--c-muted);margin:4px 0 0;">@Loc["aa.docs_analyzed"]</p>
+            </div>
+            <div style="background:var(--c-surface);border:1px solid var(--c-border);border-radius:10px;padding:14px;text-align:center;">
+                <p style="font-size:28px;font-weight:800;color:var(--c-accent);margin:0;">@_result.Fields.Count</p>
+                <p style="font-size:11px;color:var(--c-muted);margin:4px 0 0;">@Loc["aa.fields_found"]</p>
+            </div>
+            <div style="background:var(--c-surface);border:1px solid var(--c-border);border-radius:10px;padding:14px;text-align:center;">
+                <p style="font-size:28px;font-weight:800;color:var(--c-accent);margin:0;">@_accepted</p>
+                <p style="font-size:11px;color:var(--c-muted);margin:4px 0 0;">@Loc["aa.confirmed"]</p>
+            </div>
+        </div>
+
+        @foreach (var catGroup in _result.Fields.GroupBy(f => f.Category))
+        {
+            <div style="background:var(--c-surface);border:1px solid var(--c-border);border-radius:12px;overflow:hidden;">
+                <div style="padding:12px 16px;border-bottom:1px solid var(--c-border);display:flex;align-items:center;gap:10px;">
+                    <p style="font-size:13px;font-weight:700;color:var(--c-text);margin:0;">@catGroup.Key</p>
+                    <span style="font-size:11px;color:var(--c-muted);">@catGroup.Count() @(AppLoc.Current=="de"?"Felder":"fields")</span>
+                    <button class="btn secondary !py-0.5 !text-xs !px-2" style="margin-left:auto;" @onclick='() => AcceptAll(catGroup.Key)'>@Loc["btn.accept_all"]</button>
+                </div>
+                @foreach (var field in catGroup)
+                {
+                    <div style="display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid rgba(255,255,255,.04);">
+                        <button @onclick='() => ToggleField(field)'
+                                style="width:28px;height:28px;border-radius:50%;border:2px solid @(field.Accepted ? "var(--c-accent)" : "rgba(255,255,255,.15)");background:@(field.Accepted ? "var(--c-accent)" : "transparent");cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .15s;">
+                            @if (field.Accepted)
+                            {
+                                <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" style="width:13px;height:13px;"><polyline points="20 6 9 17 4 12"/></svg>
+                            }
+                        </button>
+                        <div style="flex:1;min-width:0;">
+                            <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px;">
+                                <span style="font-size:10px;font-weight:600;color:var(--c-muted);text-transform:uppercase;letter-spacing:.06em;">@field.Label</span>
+                                <span style="font-size:10px;padding:1px 6px;border-radius:999px;background:@(field.Confidence >= 85 ? "rgba(29,158,117,.15)" : "rgba(245,158,11,.1)");color:@(field.Confidence >= 85 ? "var(--c-accent)" : "#f59e0b");">@field.Confidence%</span>
+                                @if (field.FoundInDocuments > 1)
+                                {
+                                    <span style="font-size:10px;color:var(--c-muted);">@Loc["aa.found_in"] @field.FoundInDocuments @Loc["aa.found_docs"]</span>
+                                }
+                            </div>
+                            <p style="font-size:13px;font-weight:600;color:var(--c-text);margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">@field.Value</p>
+                            @if (!string.IsNullOrWhiteSpace(field.ExampleDocument))
+                            {
+                                <p style="font-size:10px;color:var(--c-muted);margin:2px 0 0;">@Loc["aa.from"] @field.ExampleDocument</p>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+
+        @if (!_result.Fields.Any())
+        {
+            <div style="text-align:center;padding:40px;color:var(--c-muted);">
+                <p style="font-size:14px;">@Loc["aa.empty"]</p>
+                <p style="font-size:12px;margin-top:6px;">@Loc["aa.empty_hint"]</p>
+            </div>
+        }
+
+        <div style="position:sticky;bottom:0;background:rgba(13,26,39,.97);backdrop-filter:blur(8px);border-top:1px solid rgba(29,158,117,.25);padding:12px 0;display:flex;gap:10px;align-items:center;">
+            <span style="font-size:12px;color:var(--c-muted);">@_accepted / @_result.Fields.Count</span>
+            <button class="btn" @onclick="ImportToWizard" disabled="@(_accepted == 0)"
+                    style="background:var(--c-accent);color:#fff;font-weight:700;margin-left:auto;display:flex;align-items:center;gap:8px;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                @Loc["btn.to_wizard"]
+            </button>
+            <button class="btn secondary !py-1.5" @onclick="Reset">@Loc["btn.re_analyze"]</button>
+        </div>
+    }
+
+</div>
+
+@code {
+    private ArchiveAnalysisStatus _status = new();
+    private ArchiveAnalysisResult? _result;
+    private System.Threading.Timer? _pollTimer;
+
+    private int _accepted => _result?.Fields.Count(f => f.Accepted) ?? 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _status = await Api.GetArchiveAnalysisStatusAsync();
+        if (_status.IsRunning)
+            StartPolling();
+        else if (_status.LastResult is not null)
+            _result = _status.LastResult;
+    }
+
+    private async Task StartAnalysis()
+    {
+        var ok = await Api.StartArchiveAnalysisAsync();
+        if (ok)
+        {
+            _status = new ArchiveAnalysisStatus { IsRunning = true, Progress = 0, Phase = "Starte …" };
+            _result = null;
+            StartPolling();
+        }
+    }
+
+    private void StartPolling()
+    {
+        _pollTimer?.Dispose();
+        _pollTimer = new System.Threading.Timer(async _ =>
+        {
+            _status = await Api.GetArchiveAnalysisStatusAsync();
+            if (!_status.IsRunning)
+            {
+                _result = _status.LastResult;
+                _pollTimer?.Dispose();
+            }
+            await InvokeAsync(StateHasChanged);
+        }, null, 1500, 1500);
+    }
+
+    private void ToggleField(ArchiveField field) => field.Accepted = !field.Accepted;
+
+    private void AcceptAll(string category)
+    {
+        if (_result is null) return;
+        var allAccepted = _result.Fields.Where(f => f.Category == category).All(f => f.Accepted);
+        foreach (var f in _result.Fields.Where(f => f.Category == category))
+            f.Accepted = !allAccepted;
+    }
+
+    private async Task ImportToWizard()
+    {
+        if (_result is null) return;
+        var accepted = _result.Fields.Where(f => f.Accepted).ToList();
+        if (!accepted.Any()) return;
+        var json = System.Text.Json.JsonSerializer.Serialize(accepted);
+        await JS.InvokeVoidAsync("sessionStorage.setItem", "archiveAnalysisImport", json);
+        SettingsTabState.Set("Prompt-Assistent");
+        Nav.NavigateTo("/settings");
+    }
+
+    private async Task Reset()
+    {
+        await Api.ClearArchiveAnalysisAsync();
+        _result = null;
+        _status = new ArchiveAnalysisStatus();
+    }
+
+    public void Dispose() => _pollTimer?.Dispose();
+}

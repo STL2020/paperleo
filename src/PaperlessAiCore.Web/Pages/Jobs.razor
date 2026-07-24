@@ -1,0 +1,238 @@
+@page "/jobs"
+@using PaperlessAiCore.Shared
+@inject ApiClient Api
+@implements IDisposable
+
+<div style="max-width:1100px;margin:0 auto;padding:20px 16px;">
+
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px;">
+        <div>
+            <h1 style="font-size:18px;font-weight:600;color:var(--text);margin:0 0 3px;">@(AppLoc.Current=="de"?"Aufgaben-Übersicht":"Job Overview")</h1>
+            <p style="font-size:12px;color:var(--muted);margin:0;">@(AppLoc.Current=="de"?"Verarbeitungsstatus aller Dokument-Jobs":"Processing status of all document jobs")</p>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);cursor:pointer;">
+                <input type="checkbox" @bind="_autoRefresh" @bind:after="ToggleAutoRefresh" />
+                Auto-Refresh (3 s)
+            </label>
+            <button class="btn secondary" style="padding:5px 12px;font-size:12px;" @onclick="LoadJobs">
+                Aktualisieren
+            </button>
+            <button class="btn secondary" style="padding:5px 12px;font-size:12px;color:#ef4444;border-color:rgba(239,68,68,.25)!important;" @onclick="ClearAll">
+                Liste leeren
+            </button>
+        </div>
+    </div>
+
+    <!-- Zähler-Karten: klickbar zum Filtern -->
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px;">
+        <div style="background:rgba(148,163,184,0.06);border:1px solid rgba(148,163,184,0.15);border-radius:9px;padding:12px;cursor:pointer;"
+             @onclick='() => SetFilter("queued")'>
+            <div style="font-size:22px;font-weight:700;color:var(--text);">@_queued</div>
+            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-top:3px;">@(AppLoc.Current=="de"?AppLoc.Current=="de"?"In Warteschlange":"Queued":"Queued")</div>
+        </div>
+        <div style="background:rgba(251,191,36,0.07);border:1px solid rgba(251,191,36,0.2);border-radius:9px;padding:12px;cursor:pointer;"
+             @onclick='() => SetFilter("running")'>
+            <div style="font-size:22px;font-weight:700;color:#fbbf24;">@_running</div>
+            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-top:3px;">@(AppLoc.Current=="de"?AppLoc.Current=="de"?"Gestartet":"Running":"Running")</div>
+        </div>
+        <div style="background:rgba(29,158,117,0.07);border:1px solid rgba(29,158,117,0.2);border-radius:9px;padding:12px;cursor:pointer;"
+             @onclick='() => SetFilter("done")'>
+            <div style="font-size:22px;font-weight:700;color:#1d9e75;">@_done</div>
+            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-top:3px;">@(AppLoc.Current=="de"?AppLoc.Current=="de"?"Abgeschlossen":"Done":"Done")</div>
+        </div>
+        <div style="background:rgba(239,68,68,0.07);border:1px solid rgba(239,68,68,0.2);border-radius:9px;padding:12px;cursor:pointer;"
+             @onclick='() => SetFilter("failed")'>
+            <div style="font-size:22px;font-weight:700;color:#ef4444;">@_failed</div>
+            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-top:3px;">@(AppLoc.Current=="de"?AppLoc.Current=="de"?"Fehlgeschlagen":"Failed":"Failed")</div>
+        </div>
+    </div>
+
+    <!-- Filter-Chips -->
+    <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;">
+        @foreach (var f in _filterOptions)
+        {
+            var isActive = _activeFilter == f.Key;
+            <button style="@(isActive ? "padding:4px 12px;border-radius:999px;font-size:12px;font-weight:500;cursor:pointer;border:1px solid var(--accent);background:rgba(29,158,117,0.12);color:var(--accent);" : "padding:4px 12px;border-radius:999px;font-size:12px;font-weight:500;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--muted);")"
+                    @onclick="() => SetFilter(f.Key)">
+                @f.Value
+            </button>
+        }
+    </div>
+
+    <!-- Tabelle -->
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;">
+        @if (_loading)
+        {
+            <div style="padding:40px;text-align:center;color:var(--muted);display:flex;align-items:center;justify-content:center;gap:10px;">
+                <div class="loading-spinner"></div>
+                @(AppLoc.Current=="de"?"Lade Aufgaben …":"Loading jobs …")
+            </div>
+        }
+        else if (_jobs.Count == 0)
+        {
+            <div style="padding:40px;text-align:center;color:var(--muted);font-size:13px;">
+                Keine Aufgaben vorhanden@(_activeFilter == "all" ? "." : $" mit Status \"{_filterOptions.GetValueOrDefault(_activeFilter, _activeFilter)}\".")
+            </div>
+        }
+        else
+        {
+            <table style="width:100%;border-collapse:collapse;">
+                <thead>
+                    <tr style="background:rgba(255,255,255,0.02);">
+                        <th style="padding:10px 14px;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;text-align:left;border-bottom:1px solid var(--border);">Name</th>
+                        <th style="padding:10px 14px;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;text-align:left;border-bottom:1px solid var(--border);">Ausgestellt</th>
+                        <th style="padding:10px 14px;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;text-align:left;border-bottom:1px solid var(--border);">Status</th>
+                        <th style="padding:10px 14px;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;text-align:left;border-bottom:1px solid var(--border);">Ergebnis</th>
+                        <th style="padding:10px 14px;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;text-align:left;border-bottom:1px solid var(--border);">Aktionen</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var job in _jobs)
+                    {
+                        var secs = job.FinishedAt.HasValue
+                            ? (job.FinishedAt.Value - job.IssuedAt).TotalSeconds
+                            : (DateTime.UtcNow - job.IssuedAt).TotalSeconds;
+                        var dur = secs < 60 ? $"{secs:F0} s" : $"{secs/60:F0} min";
+                        <tr style="border-bottom:.5px solid var(--border);">
+                            <td style="padding:10px 14px;">
+                                <div style="font-size:13px;font-weight:500;color:var(--text);">@job.Name</div>
+                                @if (job.DocumentId.HasValue)
+                                {
+                                    <div style="font-size:11px;color:var(--muted);margin-top:2px;">Dok. #@job.DocumentId</div>
+                                }
+                            </td>
+                            <td style="padding:10px 14px;font-size:12px;color:var(--muted);white-space:nowrap;">
+                                <div>@job.IssuedAt.ToLocalTime().ToString("HH:mm:ss")</div>
+                                <div style="font-size:11px;margin-top:1px;">@dur</div>
+                            </td>
+                            <td style="padding:10px 14px;">
+                                @{
+                                    var (badgeBg, badgeColor, badgeLabel) = GetStatusStyle(job.Status);
+                                }
+                                <span style="display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;font-size:11px;font-weight:600;background:@badgeBg;color:@badgeColor;">
+                                    @if (job.Status == "running")
+                                    {
+                                        <span style="width:6px;height:6px;border-radius:50%;background:@badgeColor;display:inline-block;"></span>
+                                    }
+                                    @badgeLabel
+                                </span>
+                                @if (job.Confidence.HasValue)
+                                {
+                                    <div style="font-size:10px;color:var(--muted);margin-top:3px;">@((job.Confidence.Value * 100).ToString("F0"))% Konfidenz</div>
+                                }
+                            </td>
+                            <td style="padding:10px 14px;font-size:12px;max-width:260px;">
+                                @if (!string.IsNullOrEmpty(job.Error))
+                                {
+                                    <span style="color:#ef4444;font-size:11px;">@job.Error</span>
+                                }
+                                else if (!string.IsNullOrEmpty(job.Result))
+                                {
+                                    <span style="color:var(--muted);font-size:11px;">@job.Result</span>
+                                }
+                                else if (job.Status == "running")
+                                {
+                                    <div style="display:flex;align-items:center;gap:5px;color:var(--muted);font-size:11px;">
+                                        <div class="loading-spinner" style="width:12px;height:12px;border-width:1.5px;"></div>
+                                        Verarbeitung läuft …
+                                    </div>
+                                }
+                                else
+                                {
+                                    <span style="color:rgba(255,255,255,.15);">—</span>
+                                }
+                            </td>
+                            <td style="padding:10px 14px;">
+                                @if (job.DocumentId.HasValue)
+                                {
+                                    <a href="@($"http://192.168.2.111:8000/documents/{job.DocumentId}/")"
+                                       target="_blank" rel="noopener"
+                                       style="font-size:12px;color:var(--accent);text-decoration:none;">
+                                        @(AppLoc.Current=="de"?"↗ Öffnen":"↗ Open")
+                                    </a>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </div>
+
+    @if (_jobs.Count > 0)
+    {
+        <p style="font-size:11px;color:var(--muted);margin-top:8px;text-align:right;">
+            @_jobs.Count @(AppLoc.Current=="de"?"Einträge":"entries")@(_autoRefresh ? " · " + (AppLoc.Current=="de"?"Auto-Refresh aktiv":"Auto-refresh active") : "")
+        </p>
+    }
+
+</div>
+
+@code {
+    private List<ProcessingJobDto> _jobs = new();
+    private bool _loading;
+    private bool _autoRefresh;
+    private string _activeFilter = "all";
+    private Timer? _timer;
+
+    private int _queued, _running, _done, _failed;
+
+    private static readonly Dictionary<string, string> _filterOptions = new()
+    {
+        { "all",     "Alle" },
+        { "queued",  AppLoc.Current=="de"?"In Warteschlange":"Queued" },
+        { "running", AppLoc.Current=="de"?"Gestartet":"Running" },
+        { "done",    AppLoc.Current=="de"?"Abgeschlossen":"Done" },
+        { "failed",  AppLoc.Current=="de"?"Fehlgeschlagen":"Failed" },
+    };
+
+    protected override async Task OnInitializedAsync() => await LoadJobs();
+
+    private async Task LoadJobs()
+    {
+        _loading = true;
+        StateHasChanged();
+        _jobs = await Api.GetJobsAsync(_activeFilter == "all" ? null : _activeFilter);
+        (_queued, _running, _done, _failed) = await Api.GetJobCountsAsync();
+        _loading = false;
+    }
+
+    private async Task SetFilter(string f)
+    {
+        _activeFilter = f;
+        await LoadJobs();
+    }
+
+    private void ToggleAutoRefresh()
+    {
+        _timer?.Dispose();
+        _timer = null;
+        if (_autoRefresh)
+        {
+            _timer = new Timer(async _ =>
+            {
+                _jobs = await Api.GetJobsAsync(_activeFilter == "all" ? null : _activeFilter);
+                (_queued, _running, _done, _failed) = await Api.GetJobCountsAsync();
+                await InvokeAsync(StateHasChanged);
+            }, null, 3000, 3000);
+        }
+    }
+
+    private async Task ClearAll()
+    {
+        await Api.ClearJobsAsync();
+        await LoadJobs();
+    }
+
+    private static (string bg, string color, string label) GetStatusStyle(string status) => status switch
+    {
+        "queued"  => ("rgba(148,163,184,0.1)", "#94a3b8", AppLoc.Current=="de"?"In Warteschlange":"Queued"),
+        "running" => ("rgba(251,191,36,0.1)",  "#fbbf24", AppLoc.Current=="de"?"Gestartet":"Running"),
+        "done"    => ("rgba(29,158,117,0.1)",  "#1d9e75", AppLoc.Current=="de"?"Abgeschlossen":"Done"),
+        "failed"  => ("rgba(239,68,68,0.1)",   "#ef4444", AppLoc.Current=="de"?"Fehlgeschlagen":"Failed"),
+        _         => ("rgba(148,163,184,0.1)", "#94a3b8", status),
+    };
+
+    public void Dispose() => _timer?.Dispose();
+}
