@@ -1,0 +1,257 @@
+@page "/test"
+@inject ApiClient Api
+
+<div class="flex-1 min-h-0 flex flex-col">
+    <div class="flex-1 min-h-0 flex">
+        <!-- Links: Suche + Dokumentliste -->
+        <div class="w-full md:w-[42%] lg:w-[36%] border-r border-slate-900/5 dark:border-slate-800 flex flex-col min-h-0">
+            <div class="p-4 border-b border-slate-900/5 dark:border-slate-800 shrink-0">
+                <div class="relative">
+                    <Icon Name="search" Class="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input class="search-input !py-2.5 pl-10" @bind="_searchQuery" @bind:event="oninput" @onkeydown="OnSearchKeyDown"
+                           placeholder="Dokument suchen (Titel/Inhalt) …" />
+                </div>
+            </div>
+
+            <div class="flex-1 overflow-y-auto p-3">
+                @if (_searching)
+                {
+                    <p class="hint px-2">Suche läuft …</p>
+                }
+                else if (_documents.Count > 0)
+                {
+                    <div class="space-y-1">
+                        @foreach (var doc in _documents)
+                        {
+                            <div class="list-row @(doc.Id == _selectedId ? "active" : "")" @onclick="() => Analyze(doc.Id)">
+                                <Icon Name="document" Class="w-4 h-4 shrink-0" style="@(doc.Id == _selectedId ? "color:var(--accent)" : "color:var(--muted)")" />
+                                <div class="min-w-0 flex-1">
+                                    <div class="text-sm font-medium text-slate-800 dark:text-slate-200 truncate">@doc.Title</div>
+                                    @if (doc.Created is not null)
+                                    {
+                                        <div class="text-xs text-slate-400">@(doc.Created.Length >= 10 ? doc.Created[..10] : doc.Created)</div>
+                                    }
+                                </div>
+                                @if (_processingId == doc.Id)
+                                {
+                                    <span class="text-xs text-indigo-400 shrink-0">Analysiere …</span>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+                else if (_searched)
+                {
+                    <p class="hint px-2">Keine Dokumente gefunden.</p>
+                }
+            </div>
+        </div>
+
+        <!-- Rechts: persistentes Vorschau-Panel -->
+        <!-- Rechts: Ergebnisse + PDF-Vorschau -->
+        <div class="hidden md:flex flex-1 flex-col min-h-0">
+            @if (_selectedId is null)
+            {
+                <div class="flex-1 flex items-center justify-center text-slate-400 dark:text-slate-600">
+                    <div class="text-center">
+                        <Icon Name="beaker" Class="w-10 h-10 mx-auto mb-2 opacity-40" />
+                        <p class="text-sm">Dokument aus der Liste wählen, um die KI-Extraktion zu testen</p>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <!-- Obere Hälfte: Extraktionsergebnisse -->
+                <div class="overflow-y-auto p-4" style="max-height:50%;border-bottom:0.5px solid rgba(255,255,255,0.06);">
+                    @if (_error is not null)
+                    {
+                        <div class="p-3 rounded-lg mb-3 text-sm flex items-start gap-2" style="background: rgba(220,38,38,0.08); color: var(--danger);">
+                            <Icon Name="exclamation-triangle" Class="w-4 h-4 mt-0.5 shrink-0" />
+                            <span>@_error</span>
+                        </div>
+                    }
+                    @if (_applySuccess)
+                    {
+                        <div class="p-3 rounded-lg mb-3 text-sm flex items-center gap-2" style="background: rgba(22,163,74,0.08); color: var(--success);">
+                            <Icon Name="check-circle" Class="w-4 h-4 shrink-0" /> In Paperless-ngx übernommen.
+                        </div>
+                    }
+
+                    @if (_result is not null)
+                    {
+                        <div class="flex items-center justify-between mb-3">
+                            <h3 class="!mb-0 !text-sm">Vorschau #@_result.DocumentId</h3>
+                            <span class="badge community !text-[10px]">Noch nicht übernommen</span>
+                        </div>
+
+                        <div class="space-y-3 text-sm">
+                            <div>
+                                <div class="hint !mt-0 mb-0.5 !text-[11px]">Titel</div>
+                                <div class="font-medium">@ComposedTitle</div>
+                            </div>
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <div class="hint !mt-0 mb-0.5 !text-[11px]">Korrespondent</div>
+                                    <div class="font-medium">@_result.Correspondent</div>
+                                </div>
+                                <div>
+                                    <div class="hint !mt-0 mb-0.5 !text-[11px]">Dokumenttyp</div>
+                                    <div class="font-medium">@_result.DocumentType</div>
+                                </div>
+                            </div>
+                            <div>
+                                <div class="hint !mt-0 mb-0.5 !text-[11px]">Tags</div>
+                                @if (_result.Tags.Count > 0)
+                                {
+                                    <div class="flex flex-wrap gap-1">
+                                        @foreach (var tag in _result.Tags)
+                                        {
+                                            <span class="text-[11px] px-2 py-0.5 rounded-full" style="background: rgba(79,70,229,0.12); color: var(--accent);">@tag</span>
+                                        }
+                                    </div>
+                                }
+                            </div>
+                            <div class="grid grid-cols-4 gap-3">
+                                <div>
+                                    <div class="hint !mt-0 mb-0.5 !text-[11px]">Betrag</div>
+                                    <div class="font-medium">@(_result.Amount is > 0 ? _result.Amount.Value.ToString("0.00") + " €" : "–")</div>
+                                </div>
+                                <div>
+                                    <div class="hint !mt-0 mb-0.5 !text-[11px]">Datum</div>
+                                    <div class="font-medium">@(_result.Date ?? "–")</div>
+                                </div>
+                                <div>
+                                    <div class="hint !mt-0 mb-0.5 !text-[11px]">Rechnungs-Nr.</div>
+                                    <div class="font-medium">@(_result.InvoiceNumber ?? "–")</div>
+                                </div>
+                                <div>
+                                    <div class="hint !mt-0 mb-0.5 !text-[11px]">Konfidenz</div>
+                                    <div class="font-medium">@_result.Confidence.ToString("0.00")</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex gap-2 mt-4">
+                            <button class="btn flex-1 flex items-center justify-center gap-1.5 !py-2 !text-sm" @onclick="Apply" disabled="@_applying">
+                                <Icon Name="check-circle" Class="w-4 h-4" />@(_applying ? "Übernehme …" : "Übernehmen")
+                            </button>
+                            <button class="btn secondary !py-2 !text-sm" @onclick="ClearSelection" disabled="@_applying">Verwerfen</button>
+                        </div>
+                    }
+                    else if (_selectedId is not null && _result is null && _error is null)
+                    {
+                        <div class="flex items-center gap-2 text-sm" style="color:var(--muted);">
+                            <div class="loading-spinner" style="width:16px;height:16px;border-width:2px;margin:0;"></div>
+                            Analysiere Dokument …
+                        </div>
+                    }
+                </div>
+
+                <!-- Untere Hälfte: PDF-Vorschau -->
+                <div class="flex-1 min-h-0 flex flex-col">
+                    <iframe src="@($"/api/documents/{_selectedId}/preview")" class="flex-1 w-full border-0" style="min-height:300px;"></iframe>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private string _searchQuery = "";
+    private bool _searching;
+    private bool _searched;
+    private List<DocumentSummaryDto> _documents = new();
+
+    private int? _selectedId;
+    private int? _processingId;
+    private ProcessDocumentResultDto? _result;
+    private string? _error;
+    private bool _applying;
+    private bool _applySuccess;
+
+    private string ComposedTitle => _result is null ? "" :
+        ExtractionServiceTitlePreview(_result.DocumentType, _result.Correspondent, _result.InvoiceNumber, _result.Amount);
+
+    // Spiegelt die Titel-Logik der Api 1:1 für die Live-Vorschau im Frontend.
+    private static string ExtractionServiceTitlePreview(string? type, string? who, string? invoiceNumber, double? amount)
+    {
+        var t = string.IsNullOrWhiteSpace(type) ? "Dokument" : type.Trim();
+        var w = string.IsNullOrWhiteSpace(who) ? "Unbekannt" : who.Trim();
+        var parts = new List<string> { t, w };
+        if (!string.IsNullOrWhiteSpace(invoiceNumber)) parts.Add($"Nr. {invoiceNumber.Trim()}");
+        var title = string.Join(" - ", parts);
+        if (amount is > 0) title += $" - {amount.Value.ToString("0.00").Replace(".", ",")} €";
+        return title;
+    }
+
+    private async Task OnSearchKeyDown(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e)
+    {
+        if (e.Key != "Enter") return;
+        await Search();
+    }
+
+    private async Task Search()
+    {
+        _searching = true;
+        _searched = false;
+        StateHasChanged();
+
+        _documents = await Api.SearchDocumentsAsync(_searchQuery);
+        _searching = false;
+        _searched = true;
+    }
+
+    private async Task Analyze(int id)
+    {
+        _selectedId = id;
+        _processingId = id;
+        _result = null;
+        _error = null;
+        _applySuccess = false;
+        StateHasChanged();
+
+        var (success, result, error) = await Api.ProcessDocumentAsync(id);
+        if (success)
+        {
+            _result = result;
+        }
+        else
+        {
+            _error = error;
+        }
+        _processingId = null;
+    }
+
+    private async Task Apply()
+    {
+        if (_result is null) return;
+
+        _applying = true;
+        _error = null;
+        StateHasChanged();
+
+        var (success, error) = await Api.ApplyDocumentAsync(_result.DocumentId, _result);
+        if (success)
+        {
+            _applySuccess = true;
+            _result = null;
+        }
+        else
+        {
+            _error = error;
+        }
+        _applying = false;
+    }
+
+    private void ClearSelection()
+    {
+        _selectedId = null;
+        _result = null;
+        _applySuccess = false;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Search();
+    }
+}
