@@ -1,0 +1,77 @@
+/* paperLeo – Dark Teal Theme */
+:root {
+  --bg:        #0d1a27;
+  --surface:   #0f2030;
+  --surface-2: #122538;
+  --accent:    #1d9e75;
+  --accent-2:  #00e8f5;
+  --text:      #c8dde8;
+  --muted:     #4a7090;
+  --border:    rgba(255,255,255,0.07);
+  --input-bg:  #0a1828;
+  --input-text:#c8dde8;
+  --input-border: rgba(0,232,245,0.15);
+  --danger:    #ef4444;
+  --success:   #1d9e75;
+}
+*,*::before,*::after{box-sizing:border-box;}
+body{font-family:-apple-system,"Segoe UI",system-ui,sans-serif;font-size:14px;color:var(--text);background:var(--bg);margin:0;-webkit-font-smoothing:antialiased;line-height:1.5;}
+
+/* Inputs – Checkboxen explizit ausgenommen */
+input:not([type=checkbox]):not([type=radio]):not([type=range]),select,textarea{
+  background:var(--input-bg)!important;color:var(--input-text)!important;
+  border:1px solid var(--input-border)!important;border-radius:8px;
+  padding:8px 12px;font-size:13px;font-family:inherit;outline:none;width:100%;
+  appearance:none;-webkit-appearance:none;transition:border-color .15s,box-shadow .15s;
+}
+input:not([type=checkbox]):not([type=radio])::placeholder,textarea::placeholder{color:var(--muted)!important;opacity:1;}
+input:not([type=checkbox]):not([type=radio]):focus,select:focus,textarea:focus{
+  border-color:var(--accent-2)!important;box-shadow:0 0 0 3px rgba(0,232,245,.1);
+}
+input[type=checkbox],input[type=radio]{
+  appearance:auto!important;-webkit-appearance:auto!important;background:transparent!important;
+  border:none!important;padding:0!important;width:16px!important;height:16px!important;
+  min-width:16px;cursor:pointer;accent-color:var(--accent);border-radius:0!important;
+}
+input[type=number]{width:auto;}
+select option{background:var(--input-bg);color:var(--input-text);}
+code{background:rgba(0,232,245,.08);color:var(--accent-2);padding:2px 6px;border-radius:4px;font-size:.85em;}
+
+/* Buttons */
+.btn{padding:8px 16px;font-size:13px;font-weight:500;border-radius:8px;border:none;cursor:pointer;background:var(--accent);color:#fff;display:inline-flex;align-items:center;gap:6px;transition:background .15s,opacity .15s;white-space:nowrap;}
+.btn:hover{background:#17835f;}
+.btn:disabled{opacity:.4;cursor:not-allowed;}
+.btn.secondary{background:rgba(0,232,245,.06);color:var(--accent-2);border:1px solid rgba(0,232,245,.15)!important;}
+.btn.secondary:hover{background:rgba(0,232,245,.12);}
+
+/* Badges */
+.badge{display:inline-flex;align-items:center;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:600;}
+.badge.ok{background:rgba(29,158,117,.12);color:var(--success);}
+.badge.error{background:rgba(239,68,68,.12);color:var(--danger);}
+
+/* Cards */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:12px;}
+.card h3{margin:0 0 12px;font-size:14px;font-weight:600;color:var(--text);}
+h1{font-weight:600;font-size:1.3rem;margin:0 0 14px;color:var(--text);}
+.hint{color:var(--muted);font-size:12px;margin-top:3px;line-height:1.5;}
+
+/* Loading */
+.loading-spinner{width:22px;height:22px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;display:inline-block;}
+@keyframes spin{to{transform:rotate(360deg);}}
+@keyframes fadeIn{from{opacity:0;transform:translateY(4px);}to{opacity:1;transform:none;}}
+
+/* Confirm Dialog */
+.confirm-overlay{position:fixed;inset:0;z-index:200;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;animation:fadeIn .15s;}
+.confirm-box{background:var(--surface);border:1px solid rgba(239,68,68,.25);border-radius:12px;padding:22px;width:min(92vw,400px);}
+.confirm-title{font-size:15px;font-weight:600;color:var(--danger);margin:0 0 8px;}
+.confirm-text{font-size:13px;color:var(--muted);margin:0 0 18px;line-height:1.6;}
+.confirm-actions{display:flex;gap:8px;justify-content:flex-end;}
+
+/* Scrollbars */
+::-webkit-scrollbar{width:5px;height:5px;}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:5px;}
+
+/* Tables */
+table{width:100%;border-collapse:collapse;font-size:13px;}
+th,td{text-align:left;padding:7px 6px;border-bottom:.5px solid var(--border);}
+th{color:var(--muted);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;}

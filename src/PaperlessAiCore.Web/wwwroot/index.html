@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>paperLeo</title>
+    <base href="/" />
+    <link rel="icon" type="image/svg+xml" href="img/favicon.svg" />
+    <script src="js/theme.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['-apple-system', 'Segoe UI', 'Inter', 'Roboto', 'sans-serif'] },
+                    colors: { app: '#0B0F19' },
+                },
+            },
+        };
+    </script>
+    <link rel="stylesheet" href="css/app.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <style>
+        /* ===== SPLASH SCREEN ===== */
+        #splash {
+            position: fixed; inset: 0;
+            background: #0d1a27;
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            z-index: 9999;
+            transition: opacity .5s ease;
+        }
+        #splash.hidden { opacity: 0; pointer-events: none; }
+        .splash-words {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            color: #4a7090;
+            letter-spacing: .15em;
+            text-transform: uppercase;
+            display: flex; gap: 8px;
+            margin-bottom: 32px;
+            min-height: 20px;
+        }
+        .splash-word { opacity: 0; transition: opacity .3s; }
+        .splash-word.visible { opacity: 1; }
+        .splash-sep { color: #1d9e75; opacity: 0; transition: opacity .3s; }
+        .splash-sep.visible { opacity: 1; }
+        .splash-brand {
+            font-family: -apple-system, 'Segoe UI', sans-serif;
+            font-size: 32px; font-weight: 700;
+            color: #c8dde8; letter-spacing: -.5px;
+            margin-bottom: 8px; opacity: 0;
+            transition: opacity .5s;
+        }
+        .splash-brand span { color: #1d9e75; }
+        .splash-brand.visible { opacity: 1; }
+        .splash-slogan {
+            font-size: 13px; color: #4a7090;
+            margin-bottom: 40px; opacity: 0;
+            transition: opacity .5s .2s;
+            font-style: italic;
+        }
+        .splash-slogan.visible { opacity: 1; }
+        .splash-bar-wrap {
+            width: 240px; height: 2px;
+            background: rgba(255,255,255,.06);
+            border-radius: 999px; overflow: hidden;
+            margin-bottom: 12px; opacity: 0;
+            transition: opacity .3s;
+        }
+        .splash-bar-wrap.visible { opacity: 1; }
+        .splash-bar {
+            height: 100%; width: 0%;
+            background: #1d9e75;
+            border-radius: 999px;
+            transition: width .4s ease;
+        }
+        .splash-status {
+            font-size: 11px; color: #2a5060;
+            font-family: 'JetBrains Mono', monospace;
+            letter-spacing: .05em; opacity: 0;
+            transition: opacity .3s;
+            min-height: 16px;
+        }
+        .splash-status.visible { opacity: 1; }
+
+        /* ===== DISCLAIMER MODAL ===== */
+        #disclaimer-overlay {
+            position: fixed; inset: 0;
+            background: rgba(0,0,0,.75);
+            display: flex; align-items: center; justify-content: center;
+            z-index: 9998;
+        }
+        #disclaimer-overlay.hidden { display: none; }
+        #disclaimer-box {
+            background: #0f2030;
+            border: 1px solid rgba(255,255,255,.1);
+            border-radius: 14px;
+            padding: 28px 32px;
+            max-width: 560px; width: 90%;
+            font-family: -apple-system, sans-serif;
+        }
+        #disclaimer-box h2 { font-size: 16px; font-weight: 600; color: #c8dde8; margin: 0 0 4px; }
+        #disclaimer-box .sub { font-size: 11px; color: #4a7090; margin: 0 0 20px; }
+        #disclaimer-box section { margin-bottom: 14px; }
+        #disclaimer-box section h3 { font-size: 11px; font-weight: 600; color: #1d9e75; text-transform: uppercase; letter-spacing: .07em; margin: 0 0 5px; }
+        #disclaimer-box section p { font-size: 12px; color: #6b8090; line-height: 1.6; margin: 0; }
+        #disclaimer-btn {
+            width: 100%; padding: 10px;
+            background: #1d9e75; border: none;
+            border-radius: 8px; color: white;
+            font-size: 13px; font-weight: 500;
+            cursor: pointer; margin-top: 16px;
+        }
+        #disclaimer-btn:hover { background: #17835f; }
+
+        /* ===== BLAZOR ERROR — ausgeblendet ===== */
+        #blazor-error-ui { display: none !important; }
+
+        /* Input-Overrides nach Tailwind */
+        .dark input:not([type=checkbox]):not([type=radio]):not([type=range]),
+        .dark select, .dark textarea {
+            background-color: #0a1828 !important;
+            color: #c8dde8 !important;
+            border-color: rgba(0,232,245,0.15) !important;
+        }
+        .dark input:not([type=checkbox]):not([type=radio])::placeholder,
+        .dark textarea::placeholder { color: #4a7090 !important; opacity:1; }
+        input[type=checkbox], input[type=radio] {
+            appearance: auto !important; -webkit-appearance: auto !important;
+            background: transparent !important; border: none !important;
+            padding: 0 !important; width: 16px !important; height: 16px !important;
+            min-width: 16px !important; accent-color: #1d9e75; border-radius: 0 !important;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 dark:bg-[#0B0F19] transition-colors duration-300">
+
+    <!-- SPLASH SCREEN -->
+    <div id="splash">
+        <div class="splash-words">
+            <span class="splash-word" id="sw1">Scannen</span>
+            <span class="splash-sep" id="ss1">·</span>
+            <span class="splash-word" id="sw2">Verstehen</span>
+            <span class="splash-sep" id="ss2">·</span>
+            <span class="splash-word" id="sw3">Archivieren</span>
+        </div>
+        <div class="splash-brand" id="splash-brand">Paper<span>Leo</span></div>
+        <div class="splash-slogan" id="splash-slogan">Dokumente denken nicht. paperLeo schon.</div>
+        <div class="splash-bar-wrap" id="splash-bar-wrap">
+            <div class="splash-bar" id="splash-bar"></div>
+        </div>
+        <div class="splash-status" id="splash-status">Initialisierung …</div>
+    </div>
+
+    <!-- EINMALIGER DISCLAIMER -->
+    <div id="disclaimer-overlay" class="hidden">
+        <div id="disclaimer-box">
+            <h2>Willkommen bei paperLeo</h2>
+            <p class="sub">Bitte lies die folgenden Hinweise vor der ersten Nutzung.</p>
+
+            <section>
+                <h3>Datenschutz</h3>
+                <p>Dokumentinhalte werden ausschließlich zur KI-Metadaten-Extraktion verarbeitet und nicht dauerhaft gespeichert oder an Dritte weitergegeben. Die KI-Verarbeitung erfolgt über den von dir konfigurierten Anbieter (z.B. Google Gemini, OpenAI) — es gelten zusätzlich deren Datenschutzbestimmungen.</p>
+            </section>
+
+            <section>
+                <h3>Nutzungsbedingungen</h3>
+                <p>paperLeo generiert Metadaten-Vorschläge automatisch. Alle generierten Verschlagwortungen sollten vom Nutzer geprüft werden — die Verantwortung für die korrekte Archivierung verbleibt beim Anwender. Erstelle regelmäßig Backups deines Paperless-Systems, bevor du Batch-Operationen ausführst.</p>
+            </section>
+
+            <section>
+                <h3>Lizenz</h3>
+                <p>Nutzung ausschließlich für den persönlichen oder betrieblichen Einsatz des Lizenznehmers. Haftung für indirekte Schäden ist im gesetzlich zulässigen Rahmen ausgeschlossen.</p>
+            </section>
+
+            <button id="disclaimer-btn">Verstanden — paperLeo starten</button>
+        </div>
+    </div>
+
+    <!-- APP -->
+    <div id="app">
+        <div class="loading-screen">
+            <div class="loading-spinner"></div>
+            <p>paperLeo wird geladen …</p>
+        </div>
+    </div>
+
+    <div id="blazor-error-ui" style="display:none!important"></div>
+
+    <script src="js/charts.js"></script>
+    <script src="_framework/blazor.webassembly.js"></script>
+
+    <script>
+    (function() {
+        // Disclaimer: einmalig zeigen
+        var SEEN_KEY = 'paperleo_disclaimer_v1';
+        if (!localStorage.getItem(SEEN_KEY)) {
+            var ov = document.getElementById('disclaimer-overlay');
+            var btn = document.getElementById('disclaimer-btn');
+            ov.classList.remove('hidden');
+            btn.onclick = function() {
+                localStorage.setItem(SEEN_KEY, '1');
+                ov.classList.add('hidden');
+            };
+        }
+
+        // Splash-Screen Animation
+        var steps = [
+            [100,  function() { show('sw1'); }],
+            [400,  function() { show('ss1'); show('sw2'); }],
+            [700,  function() { show('ss2'); show('sw3'); }],
+            [1200, function() { show('splash-brand'); show('splash-slogan'); }],
+            [1600, function() { show('splash-bar-wrap'); show('splash-status'); bar(20); status('Lade Blazor …'); }],
+            [2200, function() { bar(60); status('Verbinde mit paperLeo …'); }],
+            [3000, function() { bar(90); status('Bereit.'); }],
+            [3600, function() { bar(100); }],
+            [4000, function() { document.getElementById('splash').classList.add('hidden'); }],
+        ];
+
+        function show(id) {
+            var el = document.getElementById(id);
+            if (el) el.classList.add('visible');
+        }
+        function bar(pct) {
+            var b = document.getElementById('splash-bar');
+            if (b) b.style.width = pct + '%';
+        }
+        function status(txt) {
+            var s = document.getElementById('splash-status');
+            if (s) s.textContent = txt;
+        }
+
+        steps.forEach(function(s) { setTimeout(s[1], s[0]); });
+    })();
+    </script>
+    <script>
+        function downloadTextFile(filename, content) {
+            const blob = new Blob([content], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = filename;
+            document.body.appendChild(a); a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+        function getPaperLeoPreloaded(key) { return null; }
+    </script>
+</body>
+</html>

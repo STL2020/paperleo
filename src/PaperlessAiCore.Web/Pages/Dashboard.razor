@@ -1,0 +1,437 @@
+@page "/"
+@inject ApiClient Api
+@inject IJSRuntime JS
+
+<div style="max-width:1100px;padding:20px 24px;display:flex;flex-direction:column;gap:14px;">
+
+    <!-- Header: kein H1-Titel, nur Aktions-Buttons -->
+    <div style="display:flex;align-items:center;justify-content:space-between;">
+        <div style="display:flex;align-items:center;gap:8px;">
+            @if (_dto is not null)
+            {
+                <span style="font-size:11px;padding:2px 8px;border-radius:999px;background:rgba(29,158,117,0.08);color:var(--accent);border:1px solid rgba(29,158,117,0.2);">
+                    v@_dto.AppVersion · Build @_dto.BuildNumber
+                </span>
+            }
+        </div>
+        <div style="display:flex;gap:8px;">
+            <button style="background:rgba(255,255,255,0.04);border:0.5px solid rgba(255,255,255,0.08);border-radius:8px;padding:7px;cursor:pointer;color:var(--muted);display:flex;"
+                    @onclick="ToggleLogPanel" title="Log-Viewer">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:16px;height:16px;" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            </button>
+            <button style="background:var(--accent);color:white;border:none;border-radius:8px;padding:7px 14px;font-size:13px;font-weight:500;cursor:pointer;display:flex;align-items:center;gap:6px;"
+                    @onclick="ScanNow" disabled="@_scanning">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:14px;height:14px;" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                @(_scanning ? Loc["dash.scanning"] : Loc["dash.scan_now"])
+            </button>
+        </div>
+    </div>
+
+    @if (_scanResult is not null)
+    {
+        <div style="padding:10px 14px;border-radius:8px;font-size:13px;background:@(_scanResult.Success ? "rgba(34,197,94,0.08)" : "rgba(220,38,38,0.08)");color:@(_scanResult.Success ? "#4ade80" : "#f87171");border:1px solid @(_scanResult.Success ? "rgba(34,197,94,0.15)" : "rgba(220,38,38,0.15)");">
+            @(_scanResult.Success ? $"✅ {_scanResult.ProcessedCount} Dokument(e) verarbeitet" : $"❌ {_scanResult.Message}")
+        </div>
+    }
+
+    <!-- Demo-Limit -->
+    @if (_dto is not null && !_dto.ProMode)
+    {
+        var pct = (int)Math.Min(100, Math.Max(0, 100 - (_dto.DemoDocsRemaining * 100.0 / 50)));
+        <div style="background:rgba(255,255,255,0.02);border:0.5px solid rgba(255,255,255,0.06);border-radius:10px;padding:14px 16px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <span style="font-size:13px;">@(AppLoc.Current=="de"?"Demo-Version":"Demo version") · <strong>@_dto.DemoDocsRemaining</strong> @(AppLoc.Current=="de"?"von 50 Dokumenten verbleibend":"of 50 documents remaining")</span>
+                <a href="/settings" style="font-size:12px;font-weight:500;color:#d69a2d;text-decoration:none;">@(AppLoc.Current=="de"?"Vollversion aktivieren →":"Activate full version →")</a>
+            </div>
+            <div style="height:5px;background:rgba(255,255,255,0.06);border-radius:999px;overflow:hidden;">
+                <div style="width:@pct%;height:100%;background:linear-gradient(90deg,#6366f1,#818cf8);border-radius:999px;transition:width 0.5s;"></div>
+            </div>
+        </div>
+    }
+
+    @if (_loading)
+    {
+        <style>
+            @@keyframes shimmer { 0%{background-position:-400px 0} 100%{background-position:400px 0} }
+            .skel { background:linear-gradient(90deg,rgba(255,255,255,.03) 25%,rgba(255,255,255,.07) 50%,rgba(255,255,255,.03) 75%);background-size:400px 100%;animation:shimmer 1.4s infinite; border-radius:6px; }
+        </style>
+
+        <!-- Status-Anzeige -->
+        <div style="display:flex;align-items:center;gap:12px;padding:14px 16px;background:rgba(29,158,117,.06);border:1px solid rgba(29,158,117,.15);border-radius:10px;">
+            <div class="loading-spinner" style="width:18px;height:18px;border-width:2px;flex-shrink:0;"></div>
+            <div>
+                <p style="font-size:13px;font-weight:600;color:var(--c-text);margin:0 0 2px;">Dashboard lädt …</p>
+                <p style="font-size:11px;color:var(--c-muted);margin:0;">
+                    @_loadingPhase
+                </p>
+            </div>
+        </div>
+
+        <!-- Skeleton KPI-Cards -->
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;">
+            @for (int i = 0; i < 4; i++)
+            {
+                <div style="background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.06);border-radius:12px;padding:16px;">
+                    <div class="skel" style="width:22px;height:22px;margin-bottom:12px;"></div>
+                    <div class="skel" style="width:60%;height:28px;margin-bottom:6px;"></div>
+                    <div class="skel" style="width:80%;height:12px;"></div>
+                </div>
+            }
+        </div>
+
+        <!-- Skeleton @Loc["dash.activity_log"] -->
+        <div style="background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.06);border-radius:12px;padding:16px;">
+            <div class="skel" style="width:140px;height:14px;margin-bottom:16px;"></div>
+            @for (int i = 0; i < 6; i++)
+            {
+                <div style="display:flex;gap:10px;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid rgba(255,255,255,.04);">
+                    <div class="skel" style="width:36px;height:36px;border-radius:8px;flex-shrink:0;"></div>
+                    <div style="flex:1;">
+                        <div class="skel" style="width:@(60 + i * 5)%;height:12px;margin-bottom:6px;"></div>
+                        <div class="skel" style="width:@(30 + i * 3)%;height:10px;"></div>
+                    </div>
+                    <div class="skel" style="width:60px;height:10px;align-self:center;"></div>
+                </div>
+            }
+        </div>
+
+        <p style="font-size:11px;color:var(--c-muted);text-align:center;margin-top:4px;">
+            Mit ~10.000 Dokumenten kann der erste Load 10-20 Sekunden dauern. Danach wird gecacht.
+        </p>
+    }
+    else if (_dto is not null)
+    {
+        <!-- KPI-Cards – einheitliche SVG-Icons, Dark-Teal-Palette -->
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;">
+
+            <!-- Dokumente gesamt -->
+            <div style="background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.18);border-radius:12px;padding:16px;">
+                <div style="margin-bottom:8px;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="1.6" style="width:22px;height:22px;" aria-hidden="true">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                        <polyline points="14 2 14 8 20 8"/>
+                        <line x1="16" y1="13" x2="8" y2="13"/>
+                        <line x1="16" y1="17" x2="8" y2="17"/>
+                        <polyline points="10 9 9 9 8 9"/>
+                    </svg>
+                </div>
+                <div style="font-size:26px;font-weight:700;letter-spacing:-0.02em;line-height:1;color:var(--text);">@_dto.TotalDocuments.ToString("N0")</div>
+                <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin-top:4px;">@Loc["dash.docs_total"]</div>
+            </div>
+
+            <!-- KI-verarbeitet / AI-processed -->
+            <div style="background:rgba(29,158,117,0.08);border:1px solid rgba(29,158,117,0.2);border-radius:12px;padding:16px;">
+                <div style="margin-bottom:8px;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="#1d9e75" stroke-width="1.6" style="width:22px;height:22px;" aria-hidden="true">
+                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                        <polyline points="22 4 12 14.01 9 11.01"/>
+                    </svg>
+                </div>
+                <div style="font-size:26px;font-weight:700;letter-spacing:-0.02em;line-height:1;color:#1d9e75;">@_dto.ProcessedDocuments.ToString("N0")</div>
+                <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin-top:4px;">KI-verarbeitet</div>
+            </div>
+
+            <!-- Korrespondenten -->
+            <div style="background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.18);border-radius:12px;padding:16px;">
+                <div style="margin-bottom:8px;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="1.6" style="width:22px;height:22px;" aria-hidden="true">
+                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                        <circle cx="9" cy="7" r="4"/>
+                        <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                        <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                    </svg>
+                </div>
+                <div style="font-size:26px;font-weight:700;letter-spacing:-0.02em;line-height:1;color:var(--text);">@_dto.TotalCorrespondents.ToString("N0")</div>
+                <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin-top:4px;">@Loc["dash.correspondents"]</div>
+            </div>
+
+            <!-- Paperless-Status -->
+            @{
+                var plOk = _dto.PaperlessHealth == "ok";
+                var plColor = plOk ? "#1d9e75" : "#f59e0b";
+                var plBorder = plOk ? "rgba(29,158,117,0.2)" : "rgba(245,158,11,0.2)";
+                var plBg = plOk ? "rgba(29,158,117,0.08)" : "rgba(245,158,11,0.08)";
+            }
+            <div style="background:@plBg;border:1px solid @plBorder;border-radius:12px;padding:16px;">
+                <div style="margin-bottom:8px;">
+                    @if (plOk)
+                    {
+                        <svg viewBox="0 0 24 24" fill="none" stroke="@plColor" stroke-width="1.6" style="width:22px;height:22px;" aria-hidden="true">
+                            <circle cx="12" cy="12" r="10"/>
+                            <polyline points="12 6 12 12 16 14"/>
+                        </svg>
+                    }
+                    else
+                    {
+                        <svg viewBox="0 0 24 24" fill="none" stroke="@plColor" stroke-width="1.6" style="width:22px;height:22px;" aria-hidden="true">
+                            <circle cx="12" cy="12" r="10"/>
+                            <line x1="12" y1="8" x2="12" y2="12"/>
+                            <line x1="12" y1="16" x2="12.01" y2="16"/>
+                        </svg>
+                    }
+                </div>
+                <div style="font-size:16px;font-weight:600;color:@plColor;letter-spacing:-0.01em;">@(_dto.PaperlessVersion ?? "–")</div>
+                <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin-top:4px;">Paperless-ngx</div>
+            </div>
+        </div>
+
+
+        <!-- Charts -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <div style="background:rgba(255,255,255,0.02);border:0.5px solid rgba(255,255,255,0.06);border-radius:12px;padding:18px;">
+                <p style="font-size:13px;font-weight:500;color:var(--muted);margin:0 0 14px;">@(AppLoc.Current=="de"?"Verarbeitungsfortschritt":"Processing progress")</p>
+                <div style="display:flex;align-items:center;gap:16px;">
+                    <div style="position:relative;width:90px;height:90px;flex-shrink:0;">
+                        <canvas id="processingDonut" width="90" height="90"></canvas>
+                        @if (_dto.TotalDocuments > 0)
+                        {
+                            var p = (int)(_dto.ProcessedDocuments * 100.0 / _dto.TotalDocuments);
+                            <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:600;">@p%</div>
+                        }
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:6px;">
+                        <div style="display:flex;align-items:center;gap:7px;font-size:12px;"><span style="width:8px;height:8px;border-radius:2px;background:#6366f1;flex-shrink:0;display:inline-block;"></span>Verarbeitet: <strong>@_dto.ProcessedDocuments</strong></div>
+                        <div style="display:flex;align-items:center;gap:7px;font-size:12px;"><span style="width:8px;height:8px;border-radius:2px;background:rgba(148,163,184,0.2);flex-shrink:0;display:inline-block;"></span>Offen: <strong>@_dto.UnprocessedDocuments</strong></div>
+                        @if (_dto.AutoModeEnabled)
+                        {
+                            <span style="font-size:10px;font-weight:500;padding:2px 7px;border-radius:999px;background:rgba(34,197,94,0.1);color:#4ade80;border:1px solid rgba(34,197,94,0.15);margin-top:2px;display:inline-block;">@(AppLoc.Current=="de"?"Auto aktiv":"Auto active")</span>
+                        }
+                        @if (_dto.LastPollAt.HasValue)
+                        {
+                            <span style="font-size:11px;color:var(--muted);">Letzter Scan: @_dto.LastPollAt.Value.ToLocalTime().ToString("HH:mm")</span>
+                        }
+                    </div>
+                </div>
+            </div>
+
+            <div style="background:rgba(255,255,255,0.02);border:0.5px solid rgba(255,255,255,0.06);border-radius:12px;padding:18px;">
+                <p style="font-size:13px;font-weight:500;color:var(--muted);margin:0 0 14px;">Dokumenttypen</p>
+                <div style="display:flex;align-items:center;gap:14px;">
+                    <div style="width:90px;height:90px;flex-shrink:0;"><canvas id="docTypeDonut" width="90" height="90"></canvas></div>
+                    <div style="display:flex;flex-direction:column;gap:4px;flex:1;min-width:0;">
+                        @if (_dto.DocumentTypeDistribution is { Count: > 0 })
+                        {
+                            @foreach (var (dt, i) in _dto.DocumentTypeDistribution.Take(5).Select((d, i) => (d, i)))
+                            {
+                                <div style="display:flex;align-items:center;gap:6px;font-size:12px;">
+                                    <span style="width:8px;height:8px;border-radius:2px;background:@DonutColors[i % DonutColors.Length];flex-shrink:0;display:inline-block;"></span>
+                                    <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">@dt.Type</span>
+                                    <span style="color:var(--muted);margin-left:auto;">@dt.Count</span>
+                                </div>
+                            }
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- @Loc["dash.status"] + Token -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <div style="background:rgba(255,255,255,0.02);border:0.5px solid rgba(255,255,255,0.06);border-radius:12px;padding:18px;">
+                <p style="font-size:13px;font-weight:500;color:var(--muted);margin:0 0 12px;">System-Status</p>
+                <div style="display:flex;flex-direction:column;gap:0;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:0.5px solid rgba(255,255,255,0.04);font-size:13px;">
+                        <span style="color:var(--muted);">@Loc["dash.paperless"]</span>
+                        @if (_dto.PaperlessHealth == "ok")
+                        {
+                            <span style="color:#1d9e75;display:flex;align-items:center;gap:4px;">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+                                @(AppLoc.Current=="de"?"Verbunden":"Connected")
+                            </span>
+                        }
+                        else
+                        {
+                            <span style="color:#f59e0b;">⚠ @(_dto.PaperlessHealthMessage ?? "Prüfen")</span>
+                        }
+                    </div>
+                    <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:0.5px solid rgba(255,255,255,0.04);font-size:13px;">
+                        <span style="color:var(--muted);">@Loc["dash.license"]</span>
+                        <span style="color:@(_dto.ProMode ? "#d69a2d" : "var(--muted)");">@(_dto.ProMode ? Loc["header.pro"] : Loc["header.demo"])</span>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:0.5px solid rgba(255,255,255,0.04);font-size:13px;">
+                        <span style="color:var(--muted);">@Loc["dash.activity"]</span>
+                        <span>@_dto.ProcessedSinceStart @(AppLoc.Current=="de"?"Dok. (Session)":"Docs (Session)")</span>
+                    </div>
+                    @if (!string.IsNullOrEmpty(_dto.LastError))
+                    {
+                        <div style="display:flex;justify-content:space-between;align-items:flex-start;padding:6px 0;font-size:12px;">
+                            <span style="color:var(--muted);">@Loc["dash.last_error"]</span>
+                            <span style="color:#f87171;text-align:right;max-width:180px;overflow:hidden;text-overflow:ellipsis;">@_dto.LastError</span>
+                        </div>
+                    }
+                </div>
+            </div>
+
+            <div style="background:rgba(255,255,255,0.02);border:0.5px solid rgba(255,255,255,0.06);border-radius:12px;padding:18px;">
+                @if (_dto.TotalTokensUsed > 0)
+                {
+                    <p style="font-size:13px;font-weight:500;color:var(--muted);margin:0 0 12px;">@(AppLoc.Current=="de"?"Token-Nutzung":"Token usage")</p>
+                    <div style="display:flex;flex-direction:column;gap:0;">
+                        <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:0.5px solid rgba(255,255,255,0.04);font-size:13px;"><span style="color:var(--muted);">@(AppLoc.Current=="de"?"Gesamt":"Total")</span><span class="font-medium">@_dto.TotalTokensUsed.ToString("N0")</span></div>
+                        <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:0.5px solid rgba(255,255,255,0.04);font-size:13px;"><span style="color:var(--muted);">@(AppLoc.Current=="de"?"Ø Prompt":"Avg prompt")</span><span>@_dto.AveragePromptTokens.ToString("N0")</span></div>
+                        <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px;"><span style="color:var(--muted);">@(AppLoc.Current=="de"?"Ø Completion":"Avg completion")</span><span>@_dto.AverageCompletionTokens.ToString("N0")</span></div>
+                    </div>
+                }
+                else
+                {
+                    <p style="font-size:13px;font-weight:500;color:var(--muted);margin:0 0 12px;">Schnellzugriff</p>
+                    <div style="display:flex;flex-direction:column;gap:6px;">
+                        <a href="/settings" style="display:block;padding:8px 12px;background:rgba(255,255,255,0.02);border:0.5px solid rgba(255,255,255,0.06);border-radius:8px;font-size:13px;text-decoration:none;color:var(--text);">⚙️ Verbindung & KI einrichten</a>
+                        <a href="/settings" style="display:block;padding:8px 12px;background:rgba(255,255,255,0.02);border:0.5px solid rgba(255,255,255,0.06);border-radius:8px;font-size:13px;text-decoration:none;color:var(--text);">🔧 Custom Fields konfigurieren</a>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+<!-- Log-Panel -->
+@if (_logPanelOpen)
+{
+    <div style="position:fixed;inset:0;z-index:40;" @onclick="() => _logPanelOpen = false"></div>
+    <div style="position:fixed;top:60px;right:20px;width:380px;max-height:400px;background:var(--c-surface, #0f1420);border:1px solid var(--c-border);border-radius:12px;padding:14px;z-index:50;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,.4);" @onclick:stopPropagation="true">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+            <span style="font-size:13px;font-weight:500;color:var(--c-text);">Log-Viewer</span>
+            <button style="background:none;border:none;cursor:pointer;color:var(--c-muted);" @onclick="LoadLogs"><Icon Name="activity" Class="w-4 h-4" /></button>
+        </div>
+        @if (_logs.Count == 0)
+        {
+            <p style="font-size:12px;color:var(--c-muted);">@Loc["dash.no_entries"]</p>
+        }
+        else
+        {
+            @foreach (var e in _logs.Take(30))
+            {
+                <div style="display:grid;grid-template-columns:60px 55px 1fr;gap:5px;padding:4px 0;border-bottom:0.5px solid var(--c-border);font-size:11px;align-items:start;">
+                    <span style="font-size:9px;font-weight:600;padding:1px 4px;border-radius:3px;background:@LevelBg(e.Level);color:@LevelColor(e.Level);">@e.Level</span>
+                    <span style="color:var(--c-muted);">@e.Timestamp.ToLocalTime().ToString("HH:mm:ss")</span>
+                    <span style="color:var(--c-text);overflow-wrap:anywhere;">@e.Message</span>
+                </div>
+            }
+        }
+    </div>
+
+    <!-- ARCHIV-ANALYSE WIDGET -->
+    <div style="background:rgba(255,255,255,.02);border:1px solid var(--c-border);border-radius:12px;padding:16px;display:flex;align-items:center;gap:14px;">
+        <div style="padding:10px;background:rgba(29,158,117,.1);border-radius:10px;flex-shrink:0;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="var(--c-accent)" stroke-width="1.8" style="width:20px;height:20px;"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M11 8v6M8 11h6"/></svg>
+        </div>
+        <div style="flex:1;">
+            <p style="font-size:13px;font-weight:700;color:var(--c-text);margin:0 0 2px;">Archiv-Analyse</p>
+            <p style="font-size:11px;color:var(--c-muted);margin:0;">
+                @if (_analysisStatus?.LastResult is not null)
+                {
+                    <span>Letzte Analyse: @_analysisStatus.LastResult.AnalyzedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm") · @_analysisStatus.LastResult.Fields.Count Felder gefunden</span>
+                }
+                else if (_analysisStatus?.IsRunning == true)
+                {
+                    <span style="color:var(--c-accent);">Läuft … @_analysisStatus.Progress%</span>
+                }
+                else
+                {
+                    <span>Noch keine Analyse durchgeführt</span>
+                }
+            </p>
+        </div>
+        <a href="/archive-analysis" class="btn secondary !py-1.5 !text-sm" style="white-space:nowrap;text-decoration:none;">
+            @(_analysisStatus?.IsRunning == true ? (AppLoc.Current=="de"?"Status ansehen":"View status") : Loc["btn.analyze"])
+        </a>
+    </div>
+}
+
+@code {
+    private DashboardDto? _dto;
+    private bool _loading = true;
+    private bool _scanning;
+    private bool _logPanelOpen;
+    private ScanNowResult? _scanResult;
+    private List<LogEntryDto> _logs = new();
+    private string _loadingPhase = "Verbindung zu Paperless wird hergestellt …";
+    private ArchiveAnalysisStatus? _analysisStatus;
+
+    private static readonly string[] DonutColors = ["#6366f1", "#818cf8", "#a5b4fc", "#34d399", "#60a5fa", "#f472b6"];
+
+    private static string LevelBg(string l) => l switch { "Error" or "Critical" => "rgba(220,38,38,0.2)", "Warning" => "rgba(245,158,11,0.2)", _ => "rgba(99,102,241,0.15)" };
+    private static string LevelColor(string l) => l switch { "Error" or "Critical" => "#f87171", "Warning" => "#fbbf24", _ => "#a5b4fc" };
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_loading && _dto is not null) await RenderChartsAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _loadingPhase = "Verbindung zu Paperless wird hergestellt …";
+        StateHasChanged();
+
+        try
+        {
+            _loadingPhase = "Gespeicherten Status wird geprüft …";
+            StateHasChanged();
+            var cached = await JS.InvokeAsync<string?>("getPaperLeoPreloaded", "dashboard");
+            if (!string.IsNullOrEmpty(cached))
+            {
+                _dto = System.Text.Json.JsonSerializer.Deserialize<DashboardDto>(cached,
+                    new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            }
+        }
+        catch { }
+
+        if (_dto is null)
+        {
+            _loadingPhase = "Dokumente und Statistiken werden geladen … (bei ~10.000 Dokumenten kann das 10–20 Sek. dauern)";
+            StateHasChanged();
+            _dto = await Api.GetDashboardAsync();
+        }
+
+        _loadingPhase = "Fertig ✓";
+        _loading = false;
+        // Archiv-Analyse Status nachladen
+        try { _analysisStatus = await Api.GetArchiveAnalysisStatusAsync(); } catch { }
+    }
+
+    private async Task LoadLogs()
+    {
+        var (ok, entries) = await Api.GetLogsAsync();
+        if (ok) _logs = entries;
+    }
+
+    private async Task RenderChartsAsync()
+    {
+        if (_dto is null) return;
+        try
+        {
+            await JS.InvokeVoidAsync("chartInterop.renderDonut", "processingDonut",
+                new[] { "Verarbeitet", "Offen" },
+                new[] { _dto.ProcessedDocuments, Math.Max(0, _dto.TotalDocuments - _dto.ProcessedDocuments) },
+                new[] { "#6366f1", "rgba(148,163,184,0.15)" });
+
+            if (_dto.DocumentTypeDistribution is { Count: > 0 })
+            {
+                var labels = _dto.DocumentTypeDistribution.Take(5).Select(d => d.Type).ToArray();
+                var values = _dto.DocumentTypeDistribution.Take(5).Select(d => d.Count).ToArray();
+                var colors = labels.Select((_, i) => DonutColors[i % DonutColors.Length]).ToArray();
+                await JS.InvokeVoidAsync("chartInterop.renderDonut", "docTypeDonut", labels, values, colors);
+            }
+        }
+        catch { /* Charts optional */ }
+    }
+
+    private async Task ScanNow()
+    {
+        _scanning = true; _scanResult = null; StateHasChanged();
+        _scanResult = await Api.ScanNowAsync();
+        await LoadAsync();
+        await RenderChartsAsync();
+        _scanning = false;
+    }
+
+    private async Task ToggleLogPanel()
+    {
+        _logPanelOpen = !_logPanelOpen;
+        if (_logPanelOpen) await LoadLogs();
+    }
+}

@@ -1,0 +1,2158 @@
+@using PaperlessAiCore.Web.Services
+@page "/settings"
+@inject ApiClient Api
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<div class="settings-page">
+
+    @if (_loading)
+    {
+        <div style="display:flex;align-items:center;gap:10px;padding:40px 24px;color:var(--muted);">
+            <div class="loading-spinner"></div> Einstellungen werden geladen …
+        </div>
+    }
+    else if (_loadError is not null)
+    {
+        <div style="padding:24px;">
+            <div style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:10px;padding:16px;">
+                <p style="font-size:13px;font-weight:500;color:#ef4444;margin:0 0 4px;">Fehler beim Laden</p>
+                <p style="font-size:12px;color:var(--muted);margin:0 0 12px;">@_loadError</p>
+                <button class="btn secondary" @onclick="Retry">Erneut versuchen</button>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="settings-content">
+
+                @if (SettingsTabState.ActiveTab == "Verbindung & KI")
+                {
+                    <div class="sgroup">
+                        <p class="stitle">Paperless-ngx</p>
+                        <div class="sbox">
+                            <div class="sfield"><label>@Loc["conn.url"]</label><input @bind="_settings.PaperlessUrl" @bind:event="oninput" @bind:after="AutoSaveAsync" placeholder="http://192.168.1.10:8000" /></div>
+                            <div class="sfield"><label>@Loc["conn.token"]</label><input @bind="_settings.PaperlessApiToken" @bind:event="oninput" @bind:after="AutoSaveAsync" type="password" placeholder="Mein Profil → API-Token" /></div>
+                            <div class="sfield"><label>@Loc["conn.tag"]</label><input @bind="_settings.ProcessedTagName" @bind:event="oninput" @bind:after="AutoSaveAsync" placeholder="KI-Check" /></div>
+                            <div class="saction">
+                                <button class="btn secondary !py-1.5 !text-sm" @onclick="TestPaperless" disabled="@_testingPaperless">@(_testingPaperless ? "Teste …" : Loc["conn.test"])</button>
+                                @if (_paperlessTestResult is not null)
+                                {
+                                    <span class="badge @(_paperlessTestResult.Success ? "ok" : "error")">@_paperlessTestResult.Message @if (_paperlessTestResult.DocumentCount is not null) { <text>(@_paperlessTestResult.DocumentCount Dok.)</text> }</span>
+                                }
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="sgroup">
+                        <p class="stitle">@(AppLoc.Current=="de"?"KI-Provider":"AI Provider")</p>
+                        <div class="sbox">
+                            <div class="sfield">
+                                <label>Schnellauswahl</label>
+                                <div style="display:flex;flex-wrap:wrap;gap:6px;">
+                                    @foreach (var p in _providers)
+                                    {
+                                        <button type="button" class="preset-btn @(p.Key == _activeProvider ? "active" : "")"
+                                                @onclick="() => ApplyPreset(p.Key)"
+                                                title="@p.ApiBase">
+                                            @((MarkupString)p.Icon) @p.Label
+                                        </button>
+                                    }
+                                </div>
+                            </div>
+                            <div class="two-col">
+                                <div class="sfield"><label>@Loc["conn.model"]</label><input @bind="_settings.LlmModel" @bind:event="oninput" @bind:after="AutoSaveAsync" placeholder="gemini-2.5-flash" /></div>
+                                <div class="sfield"><label>@Loc["conn.apikey"]</label><input @bind="_settings.LlmApiKey" @bind:event="oninput" @bind:after="AutoSaveAsync" type="password" placeholder="sk-…" /></div>
+                                <div class="sfield"><label>@Loc["conn.apibase"]</label><input @bind="_settings.LlmApiBase" @bind:event="oninput" @bind:after="AutoSaveAsync" placeholder="leer = api.openai.com" /></div>
+                                <div class="sfield"><label>@Loc["conn.maxtoken"]</label><input type="number" min="256" step="256" @bind="_settings.LlmMaxTokens" /></div>
+                            </div>
+                            <div class="saction">
+                                <button class="btn secondary !py-1.5 !text-sm" @onclick="TestLlm" disabled="@_testingLlm">@(_testingLlm ? "Teste …" : Loc["conn.test_ki"])</button>
+                                @if (_llmTestResult is not null)
+                                {
+                                    <span class="badge @(_llmTestResult.Success ? "ok" : "error")">@_llmTestResult.Message</span>
+                                }
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="sgroup">
+                        <p class="stitle">Webhook (optional)</p>
+                        <div class="sbox">
+                            <p class="shint mb-2">@(AppLoc.Current=="de"?"Paperless: Workflows → Trigger 'Dokument hinzugefügt' → Webhook, Parameter url = {doc_url}":"Paperless: Workflows → Trigger 'Document added' → Webhook, parameter url = {doc_url}")</p>
+                            <input readonly value="@WebhookUrl" onclick="this.select()" style="width:100%;font-family:monospace;font-size:12px;" />
+                        </div>
+                    </div>
+
+                    <!-- KI-KOSTENKONTROLLE (Pro) -->
+                    <div class="sgroup">
+                        <p class="stitle">
+                            @Loc["conn.cost_title"]
+                            @if (!_proMode) { <span class="badge" style="background:rgba(245,158,11,.1);color:#fbbf24;border:1px solid rgba(245,158,11,.2);font-size:10px;margin-left:6px;">Pro</span> }
+                        </p>
+                        <div class="sbox">
+                            @if (!_proMode)
+                            {
+                                <div class="demo-hint">@(AppLoc.Current=="de"?"KI-Kostenkontrolle ist ein Pro-Feature.":"AI Cost Control is a Pro feature.")</div>
+                            }
+                            <div class="two-col">
+                                <div class="sfield">
+                                    <label>@Loc["conn.pages_limit"]</label>
+                                    <input type="number" min="0" step="1" @bind="_settings.MaxPagesPerDocument" disabled="@(!_proMode)" />
+                                    <p class="shint">@(AppLoc.Current=="de"?"Nur die ersten N Seiten werden an die KI gesendet. 0 = alle Seiten. Spart Tokens bei langen PDFs.":"Only the first N pages are sent to the AI. 0 = all pages. Saves tokens on long PDFs.")</p>
+                                </div>
+                                <div class="sfield">
+                                    <label>@Loc["conn.token_limit"]</label>
+                                    <input type="number" min="0" step="10000" @bind="_settings.MonthlyTokenLimit" disabled="@(!_proMode)" />
+                                    <p class="shint">@(AppLoc.Current=="de"?"Ab diesem Limit werden keine Dokumente mehr verarbeitet. 0 = kein Limit.":"Once this limit is reached, no more documents will be processed. 0 = no limit.")</p>
+                                </div>
+                                <div class="sfield">
+                                    <label>@Loc["conn.cost_limit"]</label>
+                                    <input type="number" min="0" step="0.50" @bind="_settings.MonthlyCostLimitEur" disabled="@(!_proMode)" />
+                                    <p class="shint">@(AppLoc.Current=="de"?"Geschätztes Kostenlimit pro Monat in €. paperLeo stoppt wenn das Limit erreicht ist. 0 = kein Limit.":"Estimated monthly cost limit in €. paperLeo stops processing when the limit is reached. 0 = no limit.")</p>
+                                </div>
+                                <div class="sfield">
+                                    <label>@Loc["conn.token_used"]</label>
+                                    <input type="number" readonly value="@_settings.MonthlyTokenUsed" style="opacity:.6;" />
+                                    <p class="shint">@(AppLoc.Current=="de"?"Wird automatisch gezählt.":"Counted automatically.") <button class="btn secondary !py-0.5 !text-xs !px-2" style="margin-left:4px;" @onclick="ResetMonthlyTokens" disabled="@(!_proMode)">Zurücksetzen</button></p>
+                                </div>
+                            </div>
+                            @if (_proMode && _settings.MonthlyTokenLimit > 0)
+                            {
+                                var pct = Math.Min(100, (int)(_settings.MonthlyTokenUsed * 100.0 / _settings.MonthlyTokenLimit));
+                                var color = pct > 80 ? "#ef4444" : pct > 60 ? "#f59e0b" : "var(--c-accent)";
+                                <div style="margin-top:8px;">
+                                    <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--c-muted);margin-bottom:4px;">
+                                        <span>Token-Verbrauch</span>
+                                        <span style="color:@color;">@_settings.MonthlyTokenUsed.ToString("N0") / @_settings.MonthlyTokenLimit.ToString("N0") (@pct%)</span>
+                                    </div>
+                                    <div style="height:6px;background:var(--c-border);border-radius:999px;overflow:hidden;">
+                                        <div style="height:100%;width:@pct%;background:@color;border-radius:999px;transition:width .3s;"></div>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+
+                @if (SettingsTabState.ActiveTab == "Verhalten")
+                {
+                    <div class="sgroup">
+                        <p class="stitle">@(AppLoc.Current=="de"?"Auto-Modus":"Auto Mode")</p>
+                        <div class="sbox">
+                            <div class="toggle-row"><div><div class="text-sm font-medium">@(AppLoc.Current=="de"?"Auto-Modus aktivieren":"Enable auto mode")</div><div class="shint">@(AppLoc.Current=="de"?"Scannt automatisch neue Dokumente.":"Automatically scans new documents.")</div></div><input type="checkbox" @bind="_settings.AutoModeEnabled" /></div>
+                            <div class="sfield mt-3"><label>@Loc["beh.interval"]</label><input type="number" min="30" step="30" @bind="_settings.PollIntervalSeconds" style="width:120px;" /></div>
+                        </div>
+                    </div>
+
+                    <div class="sgroup">
+                        <p class="stitle">@(AppLoc.Current=="de"?"KI-Funktionen":"AI Features")</p>
+                        <div class="sbox">
+                            <div class="toggle-row"><span class="text-sm">@(AppLoc.Current=="de"?"Tags vergeben":"Assign tags")</span><input type="checkbox" @bind="_settings.EnableTagsAssignment" /></div>
+                            <div class="toggle-row"><span class="text-sm">@(AppLoc.Current=="de"?"Korrespondent erkennen":"Detect correspondents")</span><input type="checkbox" @bind="_settings.EnableCorrespondentDetection" /></div>
+                            <div class="toggle-row"><span class="text-sm">@Loc["beh.doctype"]</span><input type="checkbox" @bind="_settings.EnableDocumentTypeClassification" /></div>
+                            <div class="toggle-row"><span class="text-sm">@Loc["beh.title_gen"]</span><input type="checkbox" @bind="_settings.EnableTitleGeneration" /></div>
+                            <div class="toggle-row @(!_proMode ? "opacity-50" : "")">
+                                <span class="text-sm">@Loc["beh.custom_fields"] @(!_proMode ? "· Pro" : "")</span>
+                                <input type="checkbox" @bind="_settings.EnableCustomFields" disabled="@(!_proMode)" />
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="sgroup">
+                        <p class="stitle">@(AppLoc.Current=="de"?"Einschränkungen":"Restrictions")</p>
+                        <div class="sbox">
+                            <div class="toggle-row"><span class="text-sm">@Loc["beh.only_corr"]</span><input type="checkbox" @bind="_settings.UseExistingCorrespondentsOnly" /></div>
+                            <div class="toggle-row"><span class="text-sm">@Loc["beh.only_types"]</span><input type="checkbox" @bind="_settings.UseExistingDocumentTypesOnly" /></div>
+                            <div class="toggle-row"><span class="text-sm">@Loc["beh.only_tags"]</span><input type="checkbox" @bind="_settings.UseExistingTagsOnly" /></div>
+                        </div>
+                    </div>
+
+                    <!-- TITEL-GENERATOR -->
+                    <div class="sgroup">
+                        <p class="stitle">
+                            @Loc["beh.title_format"]
+                            @if (!_proMode) { <span class="badge" style="background:rgba(245,158,11,.1);color:#fbbf24;border:1px solid rgba(245,158,11,.2);font-size:10px;margin-left:6px;">Pro</span> }
+                        </p>
+                        <div class="sbox">
+                            @if (!_proMode)
+                            {
+                                <div class="demo-hint">@(AppLoc.Current=="de"?"Titel-Format-Anpassung ist ein Pro-Feature.":"Title Format customization is a Pro feature.")</div>
+                            }
+                            <p style="font-size:12px;color:var(--c-muted);margin:0 0 12px;line-height:1.6;">@(AppLoc.Current=="de"?"Definiere wie Dokumenttitel aufgebaut werden. Klicke Bausteine an um sie hinzuzufügen, verschiebe sie mit den Pfeilen.":"Define how document titles are structured. Click blocks to add them, use arrows to reorder.")</p>
+
+                            <!-- Vorschau -->
+                            <div style="padding:8px 12px;background:rgba(29,158,117,.06);border:1px solid rgba(29,158,117,.2);border-radius:8px;margin-bottom:12px;">
+                                <p style="font-size:10px;color:var(--c-muted);margin:0 0 3px;text-transform:uppercase;letter-spacing:.06em;">@(AppLoc.Current=="de"?(AppLoc.Current=="de"?"Vorschau":"Preview"):"Preview")</p>
+                                <p style="font-size:13px;font-weight:600;color:var(--c-text);margin:0;">@string.Join(_titelTrennzeichen, _titelBausteine.Select(b => $"[{b}]"))</p>
+                                <p style="font-size:11px;color:var(--c-muted);margin:3px 0 0;">@string.Join(_titelTrennzeichen, _titelBausteine.Select(TitelBeispiel))</p>
+                            </div>
+
+                            <!-- Aktive Bausteine -->
+                            <p style="font-size:11px;font-weight:600;color:var(--c-text);margin:0 0 6px;">@(AppLoc.Current=="de"?"Aktive Bausteine":"Active blocks")</p>
+                            <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:10px;">
+                                @for (int bi = 0; bi < _titelBausteine.Count; bi++)
+                                {
+                                    var bIdx = bi;
+                                    var bName = _titelBausteine[bi];
+                                    <div style="display:flex;align-items:center;gap:6px;background:var(--c-accent-t);border:1px solid rgba(29,158,117,.25);border-radius:7px;padding:6px 10px;">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="var(--c-accent)" stroke-width="2" style="width:12px;height:12px;flex-shrink:0;"><circle cx="9" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="19" r="1"/></svg>
+                                        <span style="font-size:12px;font-weight:600;color:var(--c-accent);flex:1;">@bName</span>
+                                        <button @onclick='() => { if(bIdx>0){var t=_titelBausteine[bIdx-1];_titelBausteine[bIdx-1]=_titelBausteine[bIdx];_titelBausteine[bIdx]=t;} }' disabled="@(bIdx==0||!_proMode)" style="background:none;border:none;cursor:pointer;color:var(--c-muted);padding:1px 3px;font-size:13px;">▲</button>
+                                        <button @onclick='() => { if(bIdx<_titelBausteine.Count-1){var t=_titelBausteine[bIdx+1];_titelBausteine[bIdx+1]=_titelBausteine[bIdx];_titelBausteine[bIdx]=t;} }' disabled="@(bIdx==_titelBausteine.Count-1||!_proMode)" style="background:none;border:none;cursor:pointer;color:var(--c-muted);padding:1px 3px;font-size:13px;">▼</button>
+                                        <button @onclick='() => _titelBausteine.Remove(bName)' disabled="@(!_proMode)" style="background:none;border:none;cursor:pointer;color:var(--c-muted);font-size:15px;padding:0 3px;">×</button>
+                                    </div>
+                                }
+                            </div>
+
+                            <!-- Verfügbare Bausteine -->
+                            <p style="font-size:11px;font-weight:600;color:var(--c-text);margin:0 0 6px;">@(AppLoc.Current=="de"?"Hinzufügen":"Add")</p>
+                            <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:12px;">
+                                @foreach (var b in AlleTitelBausteine.Where(b => !_titelBausteine.Contains(b)))
+                                {
+                                    var bCopy = b;
+                                    <button @onclick='() => { if(_proMode) _titelBausteine.Add(bCopy); }' disabled="@(!_proMode)"
+                                            style="padding:4px 10px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:6px;font-size:11px;color:var(--c-muted);cursor:pointer;">
+                                        + @b
+                                    </button>
+                                }
+                            </div>
+
+                            <!-- Trennzeichen -->
+                            <p style="font-size:11px;font-weight:600;color:var(--c-text);margin:0 0 6px;">@(AppLoc.Current=="de"?"Trennzeichen":"Separator")</p>
+                            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                                @foreach (var tz in new[]{ " – ", " · ", " - ", " | ", " / " })
+                                {
+                                    var tzCopy = tz;
+                                    <button @onclick='() => { if(_proMode) _titelTrennzeichen = tzCopy; }' disabled="@(!_proMode)"
+                                            style="padding:4px 10px;background:@(_titelTrennzeichen==tz?"rgba(29,158,117,.15)":"rgba(255,255,255,.04)");border:1px solid @(_titelTrennzeichen==tz?"rgba(29,158,117,.4)":"rgba(255,255,255,.1)");border-radius:6px;font-size:11px;color:@(_titelTrennzeichen==tz?"var(--c-accent)":"var(--c-muted)");cursor:pointer;">
+                                        A@(tz)B
+                                    </button>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                }
+
+                @if (SettingsTabState.ActiveTab == "Vokabular")
+                {
+                    <div class="sgroup">
+                        <p class="stitle">@(AppLoc.Current=="de"?"Tag-Vokabular":"Tag Vocabulary")</p>
+                        <div class="sbox">
+                            @if (!_proMode) { <div class="demo-hint">🔒 Community: Vokabular auf 5 Standard-Tags beschränkt. <strong>Pro</strong> = eigenes Vokabular, Import aus Paperless, KI-Vorschläge.</div> }
+                            <div class="sfield"><label>@Loc["voc.comma_sep"]</label><textarea @bind="_settings.DefaultTagVocabulary" rows="3" disabled="@(!_proMode)" placeholder="z.B. Strom, Wasser, Mietobjekt A, Max …"></textarea></div>
+                            <div class="saction">
+                                <button class="btn secondary !py-1.5 !text-sm" @onclick="SuggestTags" disabled="@(_suggestingTags || !_proMode)" title="@(!_proMode ? "Nur in Pro verfügbar" : "KI analysiert deine letzten Dokumente und schlägt passende Tags vor")">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:14px;height:14px;" aria-hidden="true"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>
+                                    @(_suggestingTags ? Loc["voc.analyzing"] : Loc["voc.ai_suggest"])
+                                </button>
+                                <button class="btn secondary !py-1.5 !text-sm" @onclick="ImportTagsFromPaperless" disabled="@(_importingTagsFromPaperless || !_proMode)" title="@(!_proMode ? "Nur in Pro verfügbar" : "Bestehende Tags aus Paperless ins Vokabular importieren")">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:14px;height:14px;" aria-hidden="true"><polyline points="8 17 12 21 16 17"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29"/></svg>
+                                    @(_importingTagsFromPaperless ? Loc["voc.importing"] : Loc["voc.import_pl"])
+                                </button>
+                                <button class="btn secondary !py-1.5 !text-sm" @onclick="SeedTags" disabled="@(_seedingTags || !_proMode)" title="@(!_proMode ? "Nur in Pro verfügbar" : "Vokabular als neue Tags in Paperless anlegen")">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:14px;height:14px;" aria-hidden="true"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+                                    @(_seedingTags ? Loc["voc.seeding"] : Loc["voc.seed"])
+                                </button>
+                            </div>
+                            @if (_seedTagsResult is not null) { <div class="mt-2"><span class="badge ok">@(_seedTagsResult.CreatedCount) angelegt, @(_seedTagsResult.AlreadyExistedCount) vorhanden</span></div> }
+                        </div>
+                    </div>
+
+                    <div class="sgroup">
+                        <p class="stitle">@(AppLoc.Current=="de"?"Dokumenttyp-Vokabular":"Document Type Vocabulary")</p>
+                        <div class="sbox">
+                            @if (!_proMode) { <div class="demo-hint">🔒 Community: Vokabular auf 5 Standard-Typen beschränkt. <strong>Pro</strong> = eigenes Vokabular, Import aus Paperless, KI-Vorschläge.</div> }
+                            <div class="sfield"><label>@Loc["voc.comma_sep"]</label><textarea @bind="_settings.DefaultDocumentTypeVocabulary" rows="3" disabled="@(!_proMode)" placeholder="z.B. Rechnung, Vertrag, Mahnung …"></textarea></div>
+                            <div class="saction">
+                                <button class="btn secondary !py-1.5 !text-sm" @onclick="SuggestDocumentTypes" disabled="@(_suggestingDocTypes || !_proMode)" title="@(!_proMode ? "Nur in Pro verfügbar" : "KI analysiert deine letzten Dokumente und schlägt passende Typen vor")">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:14px;height:14px;" aria-hidden="true"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>
+                                    @(_suggestingDocTypes ? Loc["voc.analyzing"] : Loc["voc.ai_suggest"])
+                                </button>
+                                <button class="btn secondary !py-1.5 !text-sm" @onclick="ImportDocTypesFromPaperless" disabled="@(_importingDocTypesFromPaperless || !_proMode)" title="@(!_proMode ? "Nur in Pro verfügbar" : "Bestehende Dokumenttypen aus Paperless ins Vokabular importieren")">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:14px;height:14px;" aria-hidden="true"><polyline points="8 17 12 21 16 17"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29"/></svg>
+                                    @(_importingDocTypesFromPaperless ? Loc["voc.importing"] : Loc["voc.import_pl"])
+                                </button>
+                                <button class="btn secondary !py-1.5 !text-sm" @onclick="SeedDocumentTypes" disabled="@(_seedingDocTypes || !_proMode)" title="@(!_proMode ? "Nur in Pro verfügbar" : "Vokabular als neue Dokumenttypen in Paperless anlegen")">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:14px;height:14px;" aria-hidden="true"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+                                    @(_seedingDocTypes ? Loc["voc.seeding"] : Loc["voc.seed"])
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                }
+
+                @if (SettingsTabState.ActiveTab == "Korrespondenten")
+                {
+                    <div class="sgroup">
+                        <p class="stitle">@(AppLoc.Current=="de"?"Korrespondenten":"Correspondents")</p>
+                        <div class="sbox">
+                            <p class="shint">Korrespondenten werden automatisch aus Dokumenten erkannt und in Paperless angelegt. Duplikat-Erkennung folgt in einer kommenden Version.</p>
+                        </div>
+                    </div>
+                }
+
+                @if (SettingsTabState.ActiveTab == "Prompt-Assistent")
+                {
+                    @if (_archiveImportDone)
+                    {
+                        <div style="background:rgba(29,158,117,.08);border:1px solid rgba(29,158,117,.25);border-radius:10px;padding:12px 16px;margin-bottom:4px;display:flex;align-items:center;gap:10px;">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="var(--c-accent)" stroke-width="2" style="width:16px;height:16px;flex-shrink:0;"><polyline points="20 6 9 17 4 12"/></svg>
+                            <p style="font-size:12px;color:var(--c-text);margin:0;">
+                                <strong>Archiv-Analyse importiert</strong> — Personen, Adressen, Fahrzeuge und Arbeitgeber wurden vorausgefüllt. Bitte prüfe und ergänze die Daten.
+                            </p>
+                            <button @onclick='() => _archiveImportDone = false' style="background:none;border:none;cursor:pointer;color:var(--c-muted);margin-left:auto;font-size:16px;padding:0;">×</button>
+                        </div>
+                    }
+                    @if (_archiveExtraInfo.Any())
+                    {
+                        <div style="background:rgba(99,102,241,.06);border:1px solid rgba(99,102,241,.2);border-radius:10px;padding:12px 16px;margin-bottom:4px;">
+                            <p style="font-size:11px;font-weight:600;color:#a5b4fc;margin:0 0 8px;">Weitere gefundene Daten (werden in den Prompt eingebaut):</p>
+                            @foreach (var kv in _archiveExtraInfo)
+                            {
+                                <div style="display:flex;justify-content:space-between;font-size:11px;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.04);">
+                                    <span style="color:var(--c-muted);">@kv.Key</span>
+                                    <span style="color:var(--c-text);font-family:monospace;">@kv.Value</span>
+                                </div>
+                            }
+                        </div>
+                    }
+                    <div class="sgroup">
+                        <p class="stitle">@Loc["pa.step"] @_promptStep @Loc["pa.of"] 9 — @_promptStepLabel</p>
+                        <div class="sbox" style="min-height:300px;">
+
+                            @if (_promptStep == 1)
+                            {
+                                <!-- SCHRITT 1: SETUP-CHECK -->
+                                <div style="margin-bottom:12px;">
+                                    <p style="font-size:13px;color:var(--text);margin:0 0 6px;">@(AppLoc.Current=="de"?"paperLeo benötigt 13 Standard-Felder für den vollen Funktionsumfang.":"paperLeo needs 13 standard fields for full functionality.")</p>
+                                    <p style="font-size:12px;color:var(--muted);margin:0 0 12px;">@(AppLoc.Current=="de"?"Fehlende Felder werden automatisch in Paperless angelegt — bestehende Daten bleiben erhalten.":"Missing fields are automatically created in Paperless — existing data remains unchanged.")</p>
+                                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+                                        <div style="flex:1;height:6px;background:var(--border);border-radius:999px;overflow:hidden;">
+                                            <div style="width:@(SetupPct)%;height:100%;background:var(--accent);border-radius:999px;transition:width .4s;"></div>
+                                        </div>
+                                        <span style="font-size:13px;font-weight:500;color:var(--accent);white-space:nowrap;">@SetupFound / 13</span>
+                                    </div>
+                                    @if (SetupMissing.Any())
+                                    {
+                                        <div style="background:rgba(29,158,117,.05);border:1px solid rgba(29,158,117,.15);border-radius:8px;padding:10px 12px;margin-bottom:10px;">
+                                            <p style="font-size:12px;font-weight:500;color:var(--accent);margin:0 0 6px;">Fehlende Felder (@SetupMissing.Count):</p>
+                                            <div style="display:flex;flex-wrap:wrap;gap:5px;">
+                                                @foreach (var f in SetupMissing)
+                                                { <span style="font-size:11px;padding:2px 8px;border-radius:999px;background:rgba(239,68,68,.08);color:#ef4444;border:1px solid rgba(239,68,68,.2);">@f</span> }
+                                            </div>
+                                        </div>
+                                        <button class="btn !py-1.5 !text-sm" @onclick="CreateMissingFieldsAsync" disabled="@_creatingMissingFields">
+                                            @if (_creatingMissingFields) { <div class="loading-spinner" style="width:13px;height:13px;border-width:2px;margin:0;"></div> }
+                                            @(_creatingMissingFields ? "Lege Felder an …" : $"{SetupMissing.Count} fehlende Felder jetzt anlegen")
+                                        </button>
+                                    }
+                                    else
+                                    {
+                                        <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:rgba(29,158,117,.05);border:1px solid rgba(29,158,117,.15);border-radius:8px;">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" style="width:16px;height:16px;flex-shrink:0;" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+                                            <span style="font-size:13px;color:var(--accent);">Alle 13 Standard-Felder vorhanden — bereit für den Assistenten.</span>
+                                        </div>
+                                    }
+                                    @if (!string.IsNullOrEmpty(_setupMessage)) { <p class="shint mt-2" style="color:var(--accent);">@_setupMessage</p> }
+                                </div>
+                            }
+                            else if (_promptStep == 2)
+                            {
+                                <!-- SCHRITT 2: PERSONEN -->
+                                <p class="shint mb-3">Wer taucht in Dokumenten auf? Vornamen genügen — für das Feld „Familienmitglied".</p>
+                                <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px;">
+                                    @foreach (var p in _assistPersons)
+                                    {
+                                        <div style="display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 12px;">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.8" style="width:16px;height:16px;flex-shrink:0;" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                                            <input value="@p.Name" @oninput='e => UpdatePersonName(_assistPersons.IndexOf(p), e.Value?.ToString() ?? string.Empty)' placeholder="Vorname" style="flex:1;font-size:13px;" />
+                                            <select value="@p.Role" @onchange='e => UpdatePersonRole(_assistPersons.IndexOf(p), e.Value?.ToString() ?? "Hauptnutzer")' style="font-size:12px;width:auto;">
+                                                <option>Hauptnutzer</option>
+                                                <option>Partner/in</option>
+                                                <option>Kind</option>
+                                                <option>Elternteil</option>
+                                                <option>Mitarbeiter</option>
+                                                <option>Gesellschafter</option>
+                                            </select>
+                                            <button @onclick='() => _assistPersons.Remove(p)' style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:16px;padding:0 4px;" title="Entfernen">×</button>
+                                        </div>
+                                    }
+                                </div>
+                                <button class="btn secondary !py-1.5 !text-sm" @onclick="AddPerson">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                    @(AppLoc.Current=="de"?"Person hinzufügen":"Add person")
+                                </button>
+                            }
+                            else if (_promptStep == 3)
+                            {
+                                <!-- SCHRITT 3: ADRESSEN -->
+                                <p class="shint mb-3">@(AppLoc.Current=="de"?"Adressen bestimmen ob ein Dokument zum Mietobjekt gehört und ob Kosten steuerrelevant sind.":"Addresses determine if a document belongs to a rental property and if costs are tax-relevant.")</p>
+                                <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px;">
+                                    @foreach (var a in _assistAddresses)
+                                    {
+                                        <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;">
+                                            <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="@(a.IsMietobjekt ? "#f59e0b" : "var(--accent)")" stroke-width="1.8" style="width:16px;height:16px;flex-shrink:0;" aria-hidden="true"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+                                                <input value="@a.Kurzname" @oninput='e => UpdateAddressKurzname(_assistAddresses.IndexOf(a), e.Value?.ToString() ?? string.Empty)' placeholder="Kurzname (z.B. Zuhause)" style="flex:1;font-size:13px;" />
+                                                <select value='@(a.IsMietobjekt ? "Mietobjekt" : "Privatadresse")' @onchange='e => UpdateAddressType(_assistAddresses.IndexOf(a), e.Value?.ToString())' style="font-size:12px;width:auto;">
+                                                    <option>Privatadresse</option>
+                                                    <option>Mietobjekt</option>
+                                                    <option>@(AppLoc.Current=="de"?"Zweitwohnung":"Second home")</option>
+                                                    <option>@(AppLoc.Current=="de"?"Büro/Gewerbe":"Office/Business")</option>
+                                                </select>
+                                                <button @onclick='() => _assistAddresses.Remove(a)' style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:16px;padding:0 4px;" title="Entfernen">×</button>
+                                            </div>
+                                            <input value="@a.Adresse" @oninput='e => UpdateAddressAdresse(_assistAddresses.IndexOf(a), e.Value?.ToString() ?? string.Empty)' placeholder="Vollständige Adresse (z.B. Musterstr. 1, 12345 Stadt)" style="width:100%;font-size:12px;" />
+                                        </div>
+                                    }
+                                </div>
+                                <button class="btn secondary !py-1.5 !text-sm" @onclick="AddAddress">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                    @(AppLoc.Current=="de"?"Adresse hinzufügen":"Add address")
+                                </button>
+                            }
+                            else if (_promptStep == 4)
+                            {
+                                <!-- SCHRITT 4: FAHRZEUGE -->
+                                <p class="shint mb-3">@(AppLoc.Current=="de"?"Fahrzeuge für Kfz-Steuer, TÜV, Versicherung und Leasing-Erkennung. Optional: Fahrzeug einer Person zuordnen.":"Vehicles for vehicle tax, MOT, insurance and leasing detection. Optional: assign a vehicle to a person.")</p>
+                                <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px;">
+                                    @foreach (var v in _assistVehicles)
+                                    {
+                                        var vi = _assistVehicles.IndexOf(v);
+                                        <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;">
+                                            <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.8" style="width:16px;height:16px;flex-shrink:0;" aria-hidden="true"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+                                                <input value="@v.Modell" @oninput='e => UpdateVehicleModell(vi, e.Value?.ToString() ?? "")' placeholder="Marke / Modell (z.B. VW Golf)" style="flex:1;font-size:13px;" />
+                                                <button @onclick='() => _assistVehicles.Remove(v)' style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:16px;padding:0 4px;" title="Entfernen">×</button>
+                                            </div>
+                                            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                                                <input value="@v.Kennzeichen" @oninput='e => UpdateVehicleKennzeichen(vi, e.Value?.ToString() ?? "")' placeholder="Kennzeichen (z.B. MS-AB-123)" style="flex:1;min-width:120px;font-size:12px;" />
+                                                <select style="flex:1;min-width:120px;font-size:12px;" value="@v.PersonName" @onchange='e => UpdateVehiclePerson(vi, e.Value?.ToString() ?? "")'>
+                                                    <option value="">— Keine Person —</option>
+                                                    @foreach (var p in _assistPersons.Where(p => !string.IsNullOrWhiteSpace(p.Name)))
+                                                    {
+                                                        <option value="@p.Name">@p.Name</option>
+                                                    }
+                                                </select>
+                                                <label style="display:flex;align-items:center;gap:5px;font-size:12px;white-space:nowrap;cursor:pointer;">
+                                                    <input type="checkbox" checked="@v.IsLeasing" @onchange='e => UpdateVehicleLeasing(vi, (bool)(e.Value ?? false))' />
+                                                    Leasing
+                                                </label>
+                                            </div>
+                                        </div>
+                                    }
+                                </div>
+                                <button class="btn secondary !py-1.5 !text-sm" @onclick="AddVehicle">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                    @(AppLoc.Current=="de"?"Fahrzeug hinzufügen":"Add vehicle")
+                                </button>
+                                @if (!_assistVehicles.Any())
+                                {
+                                    <p class="shint mt-2">@(AppLoc.Current=="de"?"Keine Fahrzeuge — Kfz-Dokumente werden trotzdem erkannt, aber ohne Kennzeichen-Zuordnung.":"No vehicles — vehicle documents will still be detected, but without license plate assignment.")</p>
+                                }
+                            }
+                            else if (_promptStep == 5)
+                            {
+                                <!-- SCHRITT 5: ARBEITGEBER & BERUF -->
+                                <p class="shint mb-3">Verknüpfe Arbeitgeber mit Personen aus Schritt 2. Die KI ordnet Gehaltsabrechnungen und Dienstreisen der richtigen Person zu.</p>
+                                <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px;">
+                                    @foreach (var ag in _assistArbeitgeber)
+                                    {
+                                        var ai = _assistArbeitgeber.IndexOf(ag);
+                                        <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;">
+                                            <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.8" style="width:16px;height:16px;flex-shrink:0;"><path d="M20 7H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+                                                <input value="@ag.Firma" @oninput='e => UpdateAG(ai, e.Value?.ToString() ?? "")' placeholder="Firmenname (z.B. Musterfirma GmbH)" style="flex:1;font-size:13px;" />
+                                                @if (_assistArbeitgeber.Count > 1)
+                                                {
+                                                    <button @onclick='() => _assistArbeitgeber.Remove(ag)' style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:16px;padding:0 4px;" title="Entfernen">×</button>
+                                                }
+                                            </div>
+                                            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                                                <select style="flex:1;min-width:140px;font-size:12px;" value="@ag.PersonName" @onchange='e => UpdateAGPerson(ai, e.Value?.ToString() ?? "")'>
+                                                    <option value="">— Person zuordnen —</option>
+                                                    @foreach (var p in _assistPersons.Where(p => !string.IsNullOrWhiteSpace(p.Name)))
+                                                    {
+                                                        <option value="@p.Name">@p.Name (@p.Role)</option>
+                                                    }
+                                                </select>
+                                                <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;white-space:nowrap;">
+                                                    <input type="checkbox" checked="@ag.Selbststaendig" @onchange='e => UpdateAGSelbst(ai, (bool)(e.Value ?? false))' />
+                                                    Selbstständig / Nebengewerbe
+                                                </label>
+                                            </div>
+                                            @if (ag.FruehereArbeitgeber is not null)
+                                            {
+                                                <input value="@ag.FruehereArbeitgeber" @oninput='e => UpdateAGFrueher(ai, e.Value?.ToString() ?? "")' placeholder="Frühere Arbeitgeber (kommagetrennt)" style="width:100%;font-size:12px;margin-top:6px;" />
+                                            }
+                                            else
+                                            {
+                                                <button class="btn secondary !py-0.5 !text-xs !px-2" style="margin-top:6px;" @onclick='() => UpdateAGFrueher(ai, "")'>+ Frühere Arbeitgeber</button>
+                                            }
+                                        </div>
+                                    }
+                                </div>
+                                <button class="btn secondary !py-1.5 !text-sm" @onclick='() => _assistArbeitgeber.Add(new AssistArbeitgeber(""))'>
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                    Weiteren Arbeitgeber hinzufügen
+                                </button>
+                            }
+                            else if (_promptStep == 6)
+                            {
+                                <!-- SCHRITT 6: STEUER (regelbasiert) -->
+                                <p class="shint mb-3">Diese Auswahl erzeugt konkrete IF-THEN-Regeln im Prompt — nicht nur Kategorien.</p>
+                                <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px;">
+                                    <label style="display:flex;align-items:flex-start;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;cursor:pointer;">
+                                        <input type="checkbox" @bind="_taxHandwerker" style="margin-top:2px;" />
+                                        <div><div style="font-size:12px;font-weight:500;">Handwerker / §35a</div><div style="font-size:11px;color:var(--muted);">Rechnungen von Handwerkern im Privathaushalt</div></div>
+                                    </label>
+                                    <label style="display:flex;align-items:flex-start;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;cursor:pointer;">
+                                        <input type="checkbox" @bind="_taxWerbungskosten" style="margin-top:2px;" />
+                                        <div><div style="font-size:12px;font-weight:500;">Werbungskosten</div><div style="font-size:11px;color:var(--muted);">Arbeitsmittel, Homeoffice, Fortbildung</div></div>
+                                    </label>
+                                    <label style="display:flex;align-items:flex-start;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;cursor:pointer;">
+                                        <input type="checkbox" @bind="_taxVermietung" style="margin-top:2px;" />
+                                        <div><div style="font-size:12px;font-weight:500;">Vermietungskosten</div><div style="font-size:11px;color:var(--muted);">Kosten und Einnahmen Mietobjekte</div></div>
+                                    </label>
+                                    <label style="display:flex;align-items:flex-start;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;cursor:pointer;">
+                                        <input type="checkbox" @bind="_taxVersicherung" style="margin-top:2px;" />
+                                        <div><div style="font-size:12px;font-weight:500;">Versicherungen</div><div style="font-size:11px;color:var(--muted);">Kranken-, Lebens-, Rentenversicherung</div></div>
+                                    </label>
+                                    <label style="display:flex;align-items:flex-start;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;cursor:pointer;">
+                                        <input type="checkbox" @bind="_taxSpenden" style="margin-top:2px;" />
+                                        <div><div style="font-size:12px;font-weight:500;">Spenden</div><div style="font-size:11px;color:var(--muted);">Zuwendungsbestätigungen</div></div>
+                                    </label>
+                                    <label style="display:flex;align-items:flex-start;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;cursor:pointer;">
+                                        <input type="checkbox" @bind="_taxKirche" style="margin-top:2px;" />
+                                        <div><div style="font-size:12px;font-weight:500;">Kirchensteuer</div><div style="font-size:11px;color:var(--muted);">Kirchensteuerbescheide</div></div>
+                                    </label>
+                                </div>
+                                <div style="padding:8px 12px;background:rgba(29,158,117,.06);border-radius:8px;border:1px solid rgba(29,158,117,.15);font-size:11px;color:var(--muted);">
+                                    <strong style="color:var(--accent);">Generierte Regel:</strong> Steuer = ja WENN: @(BuildTaxRulePreview())
+                                </div>
+                                <div style="margin-top:10px;" class="sfield">
+                                    <label>Währung (für Rechnungsbetrag-Feld)</label>
+                                    <select @bind="_promptCurrency" style="width:auto;">
+                                        <option value="EUR">EUR – Euro</option>
+                                        <option value="CHF">CHF – Schweizer Franken</option>
+                                        <option value="USD">USD – US-Dollar</option>
+                                        <option value="GBP">GBP – Britisches Pfund</option>
+                                    </select>
+                                </div>
+                            }
+                            else if (_promptStep == 7)
+                            {
+                                <!-- SCHRITT 7: KORRESPONDENTEN & BEHÖRDEN -->
+                                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                                    <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px;">
+                                        <p style="font-size:12px;font-weight:500;margin:0 0 4px;">Vertragstypen</p>
+                                        <p style="font-size:11px;color:var(--muted);margin:0 0 8px;">Verbessert Erkennung von Laufzeiten</p>
+                                        <div style="display:flex;flex-direction:column;gap:5px;">
+                                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" @bind="_vtStrom" /> Strom / Gas</label>
+                                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" @bind="_vtInternet" /> Internet / Telefon</label>
+                                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" @bind="_vtVers" /> Versicherungen</label>
+                                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" @bind="_vtKV" /> Krankenversicherung</label>
+                                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" @bind="_vtMiete" /> Mietverträge</label>
+                                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" @bind="_vtLeasing" /> Leasing / Kredit</label>
+                                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" @bind="_vtAlters" /> Altersvorsorge</label>
+                                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" @bind="_vtWartung" /> Wartungsverträge</label>
+                                        </div>
+                                    </div>
+                                    <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px;">
+                                        <p style="font-size:12px;font-weight:500;margin:0 0 4px;">Behörden</p>
+                                        <p style="font-size:11px;color:var(--muted);margin:0 0 8px;">Verbessert Korrespondenten-Erkennung</p>
+                                        <div style="display:flex;flex-direction:column;gap:5px;">
+                                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" @bind="_bhFinanz" /> Finanzamt</label>
+                                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" @bind="_bhKK" /> Krankenkasse</label>
+                                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" @bind="_bhRente" /> Rentenversicherung</label>
+                                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" @bind="_bhStadt" /> Stadtverwaltung</label>
+                                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" @bind="_bhGericht" /> Gericht / Notar</label>
+                                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="checkbox" @bind="_bhIHK" /> Handwerkskammer / IHK</label>
+                                        </div>
+                                        <div style="margin-top:8px;" class="sfield">
+                                            <label>Weitere Dienstleister (optional)</label>
+                                            <input @bind="_bhDienstleister" placeholder="z.B. Hausarzt, Steuerberater" style="font-size:12px;" />
+                                        </div>
+                                    </div>
+                                </div>
+                            }
+                            else if (_promptStep == 8)
+                            {
+                                <!-- SCHRITT 8: TITEL-BUILDER -->
+                                <p class="shint mb-3">Klicke Bausteine an um sie zum Titel hinzuzufügen oder zu entfernen. Verschiebe die Reihenfolge mit den Pfeilen.</p>
+
+                                <!-- Vorschau -->
+                                <div style="padding:10px 14px;background:rgba(29,158,117,.06);border:1px solid rgba(29,158,117,.2);border-radius:8px;margin-bottom:14px;">
+                                    <p style="font-size:10px;color:var(--c-muted);margin:0 0 4px;text-transform:uppercase;letter-spacing:.06em;">Vorschau</p>
+                                    <p style="font-size:13px;font-weight:600;color:var(--c-text);margin:0;">
+                                        @string.Join(_titelTrennzeichen, _titelBausteine.Select(b => $"[{b}]"))
+                                    </p>
+                                    <p style="font-size:11px;color:var(--c-muted);margin:4px 0 0;">
+                                        Beispiel: @string.Join(_titelTrennzeichen, _titelBausteine.Select(b => b switch {
+                                            "Korrespondent" => "Musterfirma",
+                                            "Dokumenttyp" => "Rechnung",
+                                            "Datum" => "2025-03",
+                                            "Betrag" => "149,90 €",
+                                            "Rechnungsnummer" => "RE-2025-001",
+                                            "Belegnummer" => "BEL-001",
+                                            "Beschreibung" => "Wartungsvertrag",
+                                            "Fahrzeug" => "VW Golf",
+                                            "Kennzeichen" => "MS-AB-123",
+                                            _ => b
+                                        }))
+                                    </p>
+                                </div>
+
+                                <!-- Aktive Bausteine -->
+                                <p style="font-size:11px;font-weight:600;color:var(--c-text);margin:0 0 6px;">@(AppLoc.Current=="de"?"Aktive Bausteine (Reihenfolge = Titel-Reihenfolge)":"Active blocks (order = title order)")</p>
+                                <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:12px;">
+                                    @for (int bi = 0; bi < _titelBausteine.Count; bi++)
+                                    {
+                                        var bIdx = bi;
+                                        var bName = _titelBausteine[bi];
+                                        <div style="display:flex;align-items:center;gap:6px;background:var(--c-accent-t);border:1px solid rgba(29,158,117,.25);border-radius:7px;padding:7px 10px;">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="var(--c-accent)" stroke-width="2" style="width:13px;height:13px;flex-shrink:0;"><circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/></svg>
+                                            <span style="font-size:12px;font-weight:600;color:var(--c-accent);flex:1;">@bName</span>
+                                            <button @onclick='() => { if(bIdx > 0) { var t=_titelBausteine[bIdx-1]; _titelBausteine[bIdx-1]=_titelBausteine[bIdx]; _titelBausteine[bIdx]=t; } }' disabled="@(bIdx == 0)" style="background:none;border:none;cursor:pointer;color:var(--c-muted);padding:2px 4px;font-size:14px;" title="Nach oben">▲</button>
+                                            <button @onclick='() => { if(bIdx < _titelBausteine.Count-1) { var t=_titelBausteine[bIdx+1]; _titelBausteine[bIdx+1]=_titelBausteine[bIdx]; _titelBausteine[bIdx]=t; } }' disabled="@(bIdx == _titelBausteine.Count-1)" style="background:none;border:none;cursor:pointer;color:var(--c-muted);padding:2px 4px;font-size:14px;" title="Nach unten">▼</button>
+                                            <button @onclick='() => _titelBausteine.Remove(bName)' style="background:none;border:none;cursor:pointer;color:var(--c-muted);font-size:16px;padding:0 4px;" title="Entfernen">×</button>
+                                        </div>
+                                    }
+                                </div>
+
+                                <!-- Verfügbare Bausteine -->
+                                <p style="font-size:11px;font-weight:600;color:var(--c-text);margin:0 0 6px;">@(AppLoc.Current=="de"?"Verfügbare Bausteine (klicken zum Hinzufügen)":"Available blocks (click to add)")</p>
+                                <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;">
+                                    @foreach (var b in AlleTitelBausteine.Where(b => !_titelBausteine.Contains(b)))
+                                    {
+                                        var bCopy = b;
+                                        <button @onclick='() => _titelBausteine.Add(bCopy)' style="padding:5px 12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:6px;font-size:12px;color:var(--c-muted);cursor:pointer;transition:all .12s;" onmouseover="this.style.borderColor='rgba(29,158,117,.4)';this.style.color='var(--c-accent)'" onmouseout="this.style.borderColor='rgba(255,255,255,.1)';this.style.color='var(--c-muted)'">
+                                            + @b
+                                        </button>
+                                    }
+                                    @if (!AlleTitelBausteine.Except(_titelBausteine).Any())
+                                    {
+                                        <p style="font-size:11px;color:var(--c-muted);margin:0;">Alle Bausteine sind aktiv.</p>
+                                    }
+                                </div>
+
+                                <!-- Trennzeichen -->
+                                <div class="sfield">
+                                    <label>@(AppLoc.Current=="de"?"Trennzeichen zwischen Bausteinen":"Separator between blocks")</label>
+                                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                                        @foreach (var tz in new[]{ " – ", " · ", " - ", " | ", " / " })
+                                        {
+                                            var tzCopy = tz;
+                                            <button @onclick='() => _titelTrennzeichen = tzCopy' style="padding:5px 12px;background:@(_titelTrennzeichen == tz ? "rgba(29,158,117,.15)" : "rgba(255,255,255,.04)");border:1px solid @(_titelTrennzeichen == tz ? "rgba(29,158,117,.4)" : "rgba(255,255,255,.1)");border-radius:6px;font-size:12px;color:@(_titelTrennzeichen == tz ? "var(--c-accent)" : "var(--c-muted)");cursor:pointer;">
+                                                A@(tz)B
+                                            </button>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                            else if (_promptStep == 9)
+                            {
+                                <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:12px;">
+                                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                                        <span style="font-size:13px;font-weight:500;">Prompt-Qualität</span>
+                                        <span style="font-size:14px;font-weight:600;color:var(--accent);">@(QScorePct)%</span>
+                                    </div>
+                                    <div style="height:6px;background:var(--border);border-radius:999px;overflow:hidden;margin-bottom:12px;">
+                                        <div style="width:@(QScorePct)%;height:100%;background:var(--accent);border-radius:999px;transition:width .4s;"></div>
+                                    </div>
+                                    <div style="display:flex;flex-direction:column;gap:5px;">
+                                        <div style="display:flex;align-items:center;gap:8px;font-size:12px;">
+                                            @if (QPersons) { <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" style="width:13px;height:13px;flex-shrink:0;"><polyline points="20 6 9 17 4 12"/></svg> } else { <svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" style="width:13px;height:13px;flex-shrink:0;"><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> }
+                                            <span style="color:@(QPersons ? "var(--text)" : "#f59e0b");">@(_assistPersons.Count) @(QPersons ? "Personen definiert" : "Personen fehlen — Familienmitglied-Feld ungenauer")</span>
+                                        </div>
+                                        <div style="display:flex;align-items:center;gap:8px;font-size:12px;">
+                                            @if (QAddresses) { <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" style="width:13px;height:13px;flex-shrink:0;"><polyline points="20 6 9 17 4 12"/></svg> } else { <svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" style="width:13px;height:13px;flex-shrink:0;"><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> }
+                                            <span style="color:@(QAddresses ? "var(--text)" : "#f59e0b");">@(_assistAddresses.Count) @(QAddresses ? "Adressen definiert" : "Adressen fehlen — Mietobjekt-Erkennung deaktiviert")</span>
+                                        </div>
+                                        <div style="display:flex;align-items:center;gap:8px;font-size:12px;">
+                                            @if (QTax) { <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" style="width:13px;height:13px;flex-shrink:0;"><polyline points="20 6 9 17 4 12"/></svg> } else { <svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" style="width:13px;height:13px;flex-shrink:0;"><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> }
+                                            <span style="color:@(QTax ? "var(--text)" : "#f59e0b");">@(QTax ? "Steuerregeln definiert" : "Keine Steuerregeln — Steuer-Feld wird nie gesetzt")</span>
+                                        </div>
+                                        <div style="display:flex;align-items:center;gap:8px;font-size:12px;">
+                                            @if (QCF) { <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" style="width:13px;height:13px;flex-shrink:0;"><polyline points="20 6 9 17 4 12"/></svg> } else { <svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" style="width:13px;height:13px;flex-shrink:0;"><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> }
+                                            <span style="color:@(QCF ? "var(--text)" : "#f59e0b");">Custom Fields: @(_cfNames.Count)/13 @(QCF ? "" : "— Schritt 1 erneut aufrufen")</span>
+                                        </div>
+                                        @if (_assistVehicles.Any())
+                                        {
+                                            <div style="display:flex;align-items:center;gap:8px;font-size:12px;">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" style="width:13px;height:13px;flex-shrink:0;"><polyline points="20 6 9 17 4 12"/></svg>
+                                                <span>@(_assistVehicles.Count) Fahrzeug(e) definiert</span>
+                                            </div>
+                                        }
+                                    </div>
+                                </div>
+                                <p class="shint mb-2">Generierter Prompt — jetzt speichern oder noch anpassen:</p>
+                                <textarea @bind="_generatedPrompt" rows="10" style="font-family:monospace;font-size:11px;width:100%;"></textarea>
+                                <div class="saction" style="margin-top:10px;">
+                                    <button class="btn" @onclick="SaveGeneratedPrompt">Prompt speichern und aktivieren</button>
+                                    <button class="btn secondary" @onclick="() => _promptStep = 1">Von vorne</button>
+                                </div>
+                                @if (_promptSaved) { <p class="shint" style="color:var(--accent);margin-top:6px;">Prompt gespeichert und aktiv.</p> }
+                            }
+
+                        </div>
+                    </div>
+
+                    <div class="save-row">
+                        @if (_promptStep > 1)
+                        {
+                            <button class="btn secondary !py-1.5 !text-sm" @onclick="() => _promptStep--">← Zurück</button>
+                        }
+                        @if (_promptStep < 9)
+                        {
+                            <button class="btn !py-1.5 !text-sm" @onclick="AdvancePromptStep">Weiter →</button>
+                        }
+                        @if (_promptStep == 9 && !string.IsNullOrWhiteSpace(_generatedPrompt))
+                        {
+                            <button class="btn" @onclick="SaveGeneratedPrompt" style="background:var(--c-accent);color:#fff;font-weight:700;">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;margin-right:6px;"><polyline points="20 6 9 17 4 12"/></svg>
+                                Prompt speichern & aktivieren
+                            </button>
+                        }
+                        <span style="font-size:11px;color:var(--muted);margin-left:auto;">Schritt @_promptStep von 9</span>
+                    </div>
+
+                    <div class="sgroup" style="margin-top:8px;">
+                        <p class="stitle">@(AppLoc.Current=="de"?"System-Prompt (direkte Bearbeitung)":"System Prompt (direct editing)")</p>
+                        <div class="sbox">
+                            @if (_promptContainsPersonalData)
+                            {
+                                <div class="warn-hint" style="display:flex;align-items:center;gap:6px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:14px;height:14px;flex-shrink:0;" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> Prompt enthält ggf. persönliche Daten. <button class="btn secondary !py-0.5 !px-2 !text-xs ml-2" @onclick="ClearPersonalData">Leeren</button></div>
+                            }
+                            <p class="shint mb-2">Leer = Standard-Prompt. Platzhalter: <code>[tags]</code>, <code>[document_types]</code>.</p>
+                            <textarea @bind="_settings.CustomSystemPrompt" rows="8" style="font-family:monospace;font-size:12px;width:100%;"
+                                      placeholder="Leer lassen für Standard. Oder via Assistent oben generieren."></textarea>
+                        </div>
+                    </div>
+                }
+
+
+                @if (SettingsTabState.ActiveTab == "Dokument testen")
+                {
+                    <div class="sgroup">
+                        <p class="stitle">@(AppLoc.Current=="de"?"Dokument testen":"Test Document")</p>
+                        <div class="sbox !p-0 overflow-hidden" style="min-height:480px;">
+                            <TestProcessing />
+                        </div>
+                    </div>
+                }
+
+                @if (SettingsTabState.ActiveTab == "Löschaktionen")
+                {
+                    <!-- SICHER: Batch-Operationen -->
+                    <div class="sgroup">
+                        <p class="stitle">@(AppLoc.Current=="de"?"Batch-Operationen":"Batch Operations")</p>
+
+                        <!-- Batch zurücksetzen -->
+                        <div class="sbox" style="margin-bottom:10px;">
+                            <div style="display:flex;align-items:flex-start;gap:12px;">
+                                <div style="padding:8px;background:rgba(29,158,117,.1);border-radius:8px;flex-shrink:0;">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.8" style="width:18px;height:18px;" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                                </div>
+                                <div style="flex:1;">
+                                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+                                        <span style="font-size:13px;font-weight:500;">Batch zurücksetzen</span>
+                                        <span style="font-size:10px;padding:1px 7px;border-radius:999px;background:rgba(29,158,117,.1);color:var(--accent);border:1px solid rgba(29,158,117,.2);">@(AppLoc.Current=="de"?"Kein Datenverlust":"No data loss")</span>
+                                    </div>
+                                    <p style="font-size:12px;color:var(--muted);margin:0 0 6px;">@(AppLoc.Current=="de"?"Entfernt den KI-Verarbeitungs-Tag von allen Dokumenten. paperLeo verarbeitet beim nächsten Scan alle Dokumente erneut.":"Removes the AI processing tag from all documents. paperLeo will re-process all documents on the next scan.")</p>
+                                    <p style="font-size:11px;color:var(--muted);margin:0 0 8px;"><strong>@(AppLoc.Current=="de"?"Wann sinnvoll":"When useful"):</strong> @(AppLoc.Current=="de"?"Nach einer Prompt-Änderung, neuen Regeln oder wenn du alle Dokumente neu klassifizieren möchtest.":"After a prompt change, new rules, or when you want to re-classify all documents.")</p>
+                                    <button class="btn secondary !py-1.5 !text-sm" disabled="@_resetting" @onclick="() => _confirmResetIndex?.Show()">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                                        @(_resetting ?(AppLoc.Current=="de"?"Setze zurück …":"Resetting …") : (AppLoc.Current=="de"?"Batch zurücksetzen":"Reset batch"))
+                                    </button>
+                                    @if (_resetResult is not null) { <span class="badge @(_resetResult.Success ? "ok" : "error") ml-2">@(_resetResult.Success ? $"{_resetResult.ResetCount} Dokumente zurückgesetzt" : _resetResult.Message)</span> }
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Custom Fields nachpflegen -->
+                        <div class="sbox">
+                            <div style="display:flex;align-items:flex-start;gap:12px;">
+                                <div style="padding:8px;background:rgba(99,102,241,.1);border-radius:8px;flex-shrink:0;">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="1.8" style="width:18px;height:18px;" aria-hidden="true"><path d="M12 6V4m0 2a2 2 0 1 0 0 4m0-4a2 2 0 1 1 0 4m-6 8a2 2 0 1 0 0-4m0 4a2 2 0 1 1 0-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 1 0 0-4m0 4a2 2 0 1 1 0-4m0 4v2m0-6V4"/></svg>
+                                </div>
+                                <div style="flex:1;">
+                                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+                                        <span style="font-size:13px;font-weight:500;">@(AppLoc.Current=="de"?"Custom Fields nachpflegen":"Backfill custom fields")</span>
+                                        <span style="font-size:10px;padding:1px 7px;border-radius:999px;background:rgba(99,102,241,.1);color:#6366f1;border:1px solid rgba(99,102,241,.2);">@(AppLoc.Current=="de"?"Sanfte Nachpflege":"Gentle backfill")</span>
+                                    </div>
+                                    <p style="font-size:12px;color:var(--muted);margin:0 0 6px;">@(AppLoc.Current=="de"?"Befüllt leere Custom Fields bei bereits verarbeiteten Dokumenten nach — Titel, Tags und Korrespondent bleiben unverändert.":"Fills empty custom fields on already processed documents — title, tags and correspondent remain unchanged.")</p>
+                                    <p style="font-size:11px;color:var(--muted);margin:0 0 8px;"><strong>@(AppLoc.Current=="de"?"Wann sinnvoll":"When useful"):</strong> @(AppLoc.Current=="de"?"Nachdem du neue Custom Fields in Paperless angelegt hast und diese bei bestehenden Dokumenten ergänzen möchtest.":"After creating new custom fields in Paperless and wanting to populate them on existing documents.")</p>
+                                    @if (_backfillProgress?.IsRunning == true)
+                                    {
+                                        <div style="margin-bottom:8px;">
+                                            <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;">
+                                                <span style="color:var(--muted);">@_backfillProgress.Current von @_backfillProgress.Total</span>
+                                                <span style="color:var(--muted);">@_backfillProgress.Updated aktualisiert</span>
+                                            </div>
+                                            <div style="height:4px;background:var(--border);border-radius:999px;overflow:hidden;">
+                                                @if (_backfillProgress.Total > 0) { var pct2 = (int)(_backfillProgress.Current * 100.0 / _backfillProgress.Total); <div style="width:@(pct2)%;height:100%;background:#6366f1;border-radius:999px;transition:width 0.4s;"></div> }
+                                            </div>
+                                        </div>
+                                    }
+                                    <button class="btn secondary !py-1.5 !text-sm" @onclick="StartBackfill" disabled="@(_backfillProgress?.IsRunning == true)">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;" aria-hidden="true"><path d="M12 6V4m0 2a2 2 0 1 0 0 4m0-4a2 2 0 1 1 0 4"/></svg>
+                                        @(_backfillProgress?.IsRunning == true ?(AppLoc.Current=="de"?"Läuft …":"Running …") : (AppLoc.Current=="de"?"Nachpflegen starten":"Start backfill"))
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- UNWIDERRUFLICH: Löschaktionen -->
+                    <div class="sgroup">
+                        <p class="stitle" style="color:var(--danger);display:flex;align-items:center;gap:6px;">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:14px;height:14px;" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                            @(AppLoc.Current=="de"?"Unwiderrufliche Aktionen":"Irreversible Actions")
+                        </p>
+                        <div style="background:rgba(239,68,68,.04);border:1px solid rgba(239,68,68,.2);border-radius:10px;padding:12px;margin-bottom:10px;">
+                            <p style="font-size:12px;color:rgba(239,68,68,.8);margin:0;display:flex;align-items:center;gap:6px;">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;flex-shrink:0;" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+                                @(AppLoc.Current=="de"?"Betrifft das GESAMTE Paperless-System. Bitte vorher ein Backup erstellen. Diese Aktionen können nicht rückgängig gemacht werden.":"Affects the ENTIRE Paperless system. Please create a backup first. These actions cannot be undone.")
+                            </p>
+                        </div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                            <div class="sbox">
+                                <div style="display:flex;gap:10px;align-items:flex-start;">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="1.8" style="width:16px;height:16px;flex-shrink:0;margin-top:2px;" aria-hidden="true"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+                                    <div>
+                                        <p style="font-size:12px;font-weight:500;margin:0 0 3px;">@(AppLoc.Current=="de"?"Tags löschen":"Delete tags")</p>
+                                        <p style="font-size:11px;color:var(--muted);margin:0 0 8px;">@(AppLoc.Current=="de"?"Entfernt alle Tags aus Paperless. Dokumente verlieren ihre Tag-Zuordnungen.":"Removes all tags from Paperless. Documents will lose their tag assignments.")</p>
+                                        <button class="del-btn" disabled="@_deletingTags" @onclick="() => _confirmTags?.Show()">@(_deletingTags ?(AppLoc.Current=="de"?"Lösche …":"Deleting …") : (AppLoc.Current=="de"?"Tags löschen":"Delete tags"))</button>
+                                        @if (_deleteTagsResult is not null) { <p class="shint mt-1">@(_deleteTagsResult.Success ? $"{_deleteTagsResult.DeletedCount} gelöscht" : _deleteTagsResult.Message)</p> }
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="sbox">
+                                <div style="display:flex;gap:10px;align-items:flex-start;">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="1.8" style="width:16px;height:16px;flex-shrink:0;margin-top:2px;" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/></svg>
+                                    <div>
+                                        <p style="font-size:12px;font-weight:500;margin:0 0 3px;">@(AppLoc.Current=="de"?"Dokumenttypen löschen":"Delete document types")</p>
+                                        <p style="font-size:11px;color:var(--muted);margin:0 0 8px;">@(AppLoc.Current=="de"?"Entfernt alle Dokumenttypen. Dokumente verlieren ihre Typ-Zuordnung.":"Removes all document types. Documents will lose their type assignment.")</p>
+                                        <button class="del-btn" disabled="@_deletingDocTypes" @onclick="() => _confirmDocTypes?.Show()">@(_deletingDocTypes ? (AppLoc.Current=="de"?"Lösche …":"Deleting …") : (AppLoc.Current=="de"?"Typen löschen":"Delete types"))</button>
+                                        @if (_deleteDocTypesResult is not null) { <p class="shint mt-1">@(_deleteDocTypesResult.Success ? $"{_deleteDocTypesResult.DeletedCount} gelöscht" : _deleteDocTypesResult.Message)</p> }
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="sbox">
+                                <div style="display:flex;gap:10px;align-items:flex-start;">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="1.8" style="width:16px;height:16px;flex-shrink:0;margin-top:2px;" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+                                    <div>
+                                        <p style="font-size:12px;font-weight:500;margin:0 0 3px;">@(AppLoc.Current=="de"?"Korrespondenten löschen":"Delete correspondents")</p>
+                                        <p style="font-size:11px;color:var(--muted);margin:0 0 8px;">@(AppLoc.Current=="de"?"Entfernt alle Korrespondenten aus Paperless.":"Removes all correspondents from Paperless.")</p>
+                                        <button class="del-btn" disabled="@_deletingCorrespondents" @onclick="() => _confirmCorrespondents?.Show()">@(_deletingCorrespondents ? "Lösche …" : (AppLoc.Current=="de"?"Korrespondenten löschen":"Delete correspondents"))</button>
+                                        @if (_deleteCorrespondentsResult is not null) { <p class="shint mt-1">@(_deleteCorrespondentsResult.Success ? $"{_deleteCorrespondentsResult.DeletedCount} gelöscht" : _deleteCorrespondentsResult.Message)</p> }
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="sbox" style="border-color:rgba(239,68,68,.3);background:rgba(239,68,68,.03);">
+                                <div style="display:flex;gap:10px;align-items:flex-start;">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="1.8" style="width:16px;height:16px;flex-shrink:0;margin-top:2px;" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+                                    <div>
+                                        <p style="font-size:12px;font-weight:500;color:var(--danger);margin:0 0 3px;">@(AppLoc.Current=="de"?"Alles löschen":"Delete everything")</p>
+                                        <p style="font-size:11px;color:var(--muted);margin:0 0 8px;">@(AppLoc.Current=="de"?"Tags + Typen + Korrespondenten auf einmal. Vollständiger Reset aller Metadaten.":"Tags + types + correspondents at once. Complete reset of all metadata.")</p>
+                                        <button class="del-btn strong" disabled="@_fullResetting" @onclick="() => _confirmFullReset?.Show()">@(_fullResetting ?(AppLoc.Current=="de"?"Lösche alles …":"Deleting all …") : (AppLoc.Current=="de"?"Alles löschen":"Delete everything"))</button>
+                                        @if (_fullResetResult is not null) { <p class="shint mt-1">@(_fullResetResult.Success ? $"{_fullResetResult.TagsDeleted}T/{_fullResetResult.DocumentTypesDeleted}D/{_fullResetResult.CorrespondentsDeleted}K gelöscht" : _fullResetResult.Message)</p> }
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                }
+
+                @if (SettingsTabState.ActiveTab == "Lizenz")
+                {
+                    <div class="sgroup">
+                        <p class="stitle">@Loc["lic.title"]</p>
+                        <div class="sbox">
+                            <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+                                <div style="padding:10px;background:var(--accent-t,rgba(29,158,117,.1));border-radius:10px;">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.8" style="width:22px;height:22px;" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                                </div>
+                                <div>
+                                    <p style="font-size:14px;font-weight:600;margin:0 0 2px;">paperLeo @(_proMode ? "Pro" : "Community")</p>
+                                    <p style="font-size:12px;color:var(--muted);margin:0;">@(_proMode ?(AppLoc.Current=="de"?"Vollversion aktiv — alle Features freigeschaltet":"Full version active — all features unlocked") : (AppLoc.Current=="de"?"Community-Version — Upgrade für alle Features":"Community version — upgrade for all features"))</p>
+                                </div>
+                            </div>
+
+                            @if (!_proMode)
+                            {
+                                <div style="background:rgba(29,158,117,.05);border:1px solid rgba(29,158,117,.15);border-radius:8px;padding:12px;margin-bottom:14px;">
+                                    <p style="font-size:12px;font-weight:500;color:var(--accent);margin:0 0 8px;">@(AppLoc.Current=="de"?"Pro freischalten":"Unlock Pro")</p>
+                                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:10px;">
+                                        @foreach (var f in new[]{"Prompt-Assistent mit Speichern","Unlimitierte Tags & Dokumenttypen","KI-Kostenkontrolle","Batch-Verarbeitung","Backfill-Funktion","Priority Support"})
+                                        {
+                                            <div style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" style="width:11px;height:11px;flex-shrink:0;"><polyline points="20 6 9 17 4 12"/></svg>
+                                                @f
+                                            </div>
+                                        }
+                                    </div>
+                                    <a href="https://payhip.com/b/4auSd" target="_blank" class="btn" style="font-size:12px;padding:6px 14px;display:inline-block;text-decoration:none;">
+                                        Jetzt upgraden →
+                                    </a>
+                                </div>
+                            }
+
+                            <div class="sfield">
+                                <label>@(AppLoc.Current=="de"?"Lizenzschlüssel eingeben":"Enter license key")</label>
+                                <div style="display:flex;gap:8px;">
+                                    <input @bind="_licenseKey" placeholder="PAPERLEO-PRO-XXXX-XXXX-XXXX" style="flex:1;font-family:monospace;font-size:12px;" />
+                                    <button class="btn !py-1.5 !text-sm" @onclick="ActivateLicense" disabled="@_activatingLicense">
+                                        @(_activatingLicense ? Loc["lic.activating"] : Loc["lic.activate"])
+                                    </button>
+                                </div>
+                                @if (_licenseMessage is not null)
+                                {
+                                    <span class="badge @(_licenseSuccess ? "ok" : "error") mt-1">@_licenseMessage</span>
+                                }
+                            </div>
+
+                            @if (_proMode)
+                            {
+                                <div style="margin-top:10px;">
+                                    <button class="btn secondary !py-1.5 !text-sm" @onclick="DeactivateLicense">Lizenz deaktivieren</button>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+
+                @if (SettingsTabState.ActiveTab == "Backup")
+                {
+                    <div class="sgroup">
+                        <div style="background:linear-gradient(135deg,rgba(29,158,117,.12) 0%,rgba(29,158,117,.04) 100%);border:1px solid rgba(29,158,117,.2);border-radius:12px;padding:18px 16px;display:flex;gap:14px;align-items:flex-start;">
+                            <div style="padding:10px;background:rgba(29,158,117,.15);border-radius:10px;flex-shrink:0;">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="var(--c-accent)" stroke-width="1.8" style="width:22px;height:22px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                            </div>
+                            <div>
+                                <p style="font-size:14px;font-weight:700;color:var(--c-text);margin:0 0 4px;">Backup & Wiederherstellung</p>
+                                <p style="font-size:12px;color:var(--c-muted);margin:0;line-height:1.6;">Alle Einstellungen werden in <code style="background:rgba(255,255,255,.06);padding:1px 5px;border-radius:3px;font-size:11px;">data/settings.env</code> gespeichert. Export enthält: Paperless-URL, API-Token, KI-Einstellungen, Lizenzschlüssel, Vokabular, System-Prompt und alle Konfigurationsoptionen.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- EXPORT -->
+                    <div class="sgroup">
+                        <p class="stitle">@Loc["bak.export_title"]</p>
+                        <div class="sbox">
+                            <p style="font-size:12px;color:var(--c-muted);margin:0 0 14px;line-height:1.6;">@(AppLoc.Current=="de"?"Lädt alle Einstellungen als .env-Datei herunter. Diese Datei enthält alle Zugangsdaten — sicher aufbewahren.":"Downloads all settings as a .env file. This file contains all credentials — keep it safe.")</p>
+                            <button class="btn" @onclick="ExportSettings" disabled="@_exportingSettings" style="background:var(--c-accent);color:#fff;font-weight:700;display:flex;align-items:center;gap:8px;">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                                @(_exportingSettings ? Loc["bak.exporting"] : Loc["bak.export_btn"])
+                            </button>
+                            @if (_importExportMessage is not null && _importExportSuccess)
+                            {
+                                <div style="margin-top:10px;"><span class="badge ok">@_importExportMessage</span></div>
+                            }
+                        </div>
+                    </div>
+
+                    <!-- IMPORT -->
+                    <div class="sgroup">
+                        <p class="stitle">@Loc["bak.import_title"]</p>
+                        <div class="sbox">
+                            <p style="font-size:12px;color:var(--c-muted);margin:0 0 14px;line-height:1.6;">@(AppLoc.Current=="de"?"Spielt eine zuvor exportierte settings.env-Datei ein. Alle Einstellungen werden überschrieben. paperLeo startet danach neu.":"Restores a previously exported settings.env file. All current settings will be overwritten. paperLeo will restart automatically.")</p>
+                            <label style="display:inline-flex;align-items:center;gap:8px;padding:10px 20px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;color:var(--c-text);">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                @Loc["bak.import_btn"]
+                                <InputFile OnChange="ImportSettings" accept=".env,text/plain" style="display:none;" />
+                            </label>
+                            @if (_importExportMessage is not null && !_importExportSuccess)
+                            {
+                                <div style="margin-top:10px;"><span class="badge error">@_importExportMessage</span></div>
+                            }
+                            <div style="margin-top:14px;padding:10px;background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.15);border-radius:8px;">
+                                <p style="font-size:11px;color:rgba(245,158,11,.9);margin:0;line-height:1.6;"><strong>Hinweis:</strong> @(AppLoc.Current=="de"?"Nach dem Import wird die Seite neu geladen. Stelle sicher, dass die Datei von einem paperLeo-Export stammt":"After import the page reloads. Make sure the file is from a paperLeo export") (muss <code style="font-size:10px;">PAPERLESS_URL</code> oder <code style="font-size:10px;">LLM_PROVIDER</code> enthalten).</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- MANUELL BEARBEITEN -->
+                    <div class="sgroup">
+                        <p class="stitle">@Loc["bak.path_title"]</p>
+                        <div class="sbox">
+                            <p style="font-size:12px;color:var(--c-muted);margin:0 0 8px;line-height:1.6;">@(AppLoc.Current=="de"?"Die settings.env kann auch direkt bearbeitet werden. Ein Neustart der App ist danach nötig.":"The settings.env can also be edited directly. The app needs to be restarted afterwards.")</p>
+                            <div style="background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:12px;font-family:monospace;font-size:12px;color:#7dd3a8;">
+                                Docker: /app/data/settings.env<br/>
+                                Lokal: C:\Projekte\PaperlessAiCore\data\settings.env
+                            </div>
+                        </div>
+                    </div>
+                }
+
+                @if (SettingsTabState.ActiveTab == "Hilfe")
+                {
+                    <!-- HERO -->
+                    <div class="sgroup">
+                        <div style="background:linear-gradient(135deg,rgba(29,158,117,.15) 0%,rgba(29,158,117,.04) 100%);border:1px solid rgba(29,158,117,.25);border-radius:14px;padding:24px 20px;">
+                            <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;">
+                                <div style="padding:12px;background:rgba(29,158,117,.2);border-radius:12px;flex-shrink:0;">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--c-accent)" stroke-width="1.8" style="width:28px;height:28px;" aria-hidden="true"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+                                </div>
+                                <div>
+                                    <p style="font-size:18px;font-weight:800;margin:0 0 4px;color:var(--c-text);">paperLeo — @Loc["help.title"]</p>
+                                    <p style="font-size:12px;color:var(--c-muted);margin:0;">@Loc["help.subtitle"] · v@(AppInfo.Version)</p>
+                                </div>
+                            </div>
+                            <p style="font-size:13px;line-height:1.8;margin:0 0 14px;color:var(--c-muted);">@Loc["help.what_desc"]</p>
+                            <div style="display:flex;flex-wrap:wrap;gap:6px;">
+                                @foreach (var (num, de, en) in new[]{
+                                    ("1","Voraussetzungen","Prerequisites"),
+                                    ("2","Installation","Installation"),
+                                    ("3","Verbindung","Connection"),
+                                    ("4","KI konfigurieren","Configure AI"),
+                                    ("5","Vokabular","Vocabulary"),
+                                    ("6","Prompt-Assistent","Prompt Assistant"),
+                                    ("7","Verhalten","Behavior"),
+                                    ("8","Webhook","Webhook"),
+                                    ("9","Custom Fields","Custom Fields"),
+                                    ("10","Dashboard","Dashboard"),
+                                    ("11","Archiv-Analyse","Archive Analysis"),
+                                    ("12","Titel-Builder","Title Builder"),
+                                    ("13","Dokument testen","Test Document"),
+                                    ("14","Backup","Backup"),
+                                    ("15","Lizenz","License"),
+                                    ("16","Troubleshooting","Troubleshooting")
+                                })
+                                {
+                                    <span style="font-size:11px;background:rgba(29,158,117,.1);border:1px solid rgba(29,158,117,.2);border-radius:6px;padding:3px 8px;color:var(--c-accent);">@num · @(AppLoc.Current=="de"?de:en)</span>
+                                }
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- KAPITEL 1: VORAUSSETZUNGEN -->
+                    <div class="sgroup">
+                        <p class="stitle">1 · @(AppLoc.Current=="de"?"Voraussetzungen":"Prerequisites")</p>
+                        <div class="sbox">
+                            @foreach (var (icon, de, en) in new[]{
+                                ("M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2V9M9 21H5a2 2 0 0 1-2-2V9m0 0h18",
+                                    "Paperless-ngx (empfohlen: 2.x oder 3.x) muss laufen und über HTTP/HTTPS erreichbar sein",
+                                    "Paperless-ngx (recommended: 2.x or 3.x) must be running and accessible via HTTP/HTTPS"),
+                                ("M15 7h3a5 5 0 0 1 5 5 5 5 0 0 1-5 5h-3m-6 0H6a5 5 0 0 1-5-5 5 5 0 0 1 5-5h3",
+                                    "API-Token aus Paperless: Mein Profil → API-Token",
+                                    "API Token from Paperless: My Profile → API Token"),
+                                ("M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z",
+                                    "KI-API-Key: Google Gemini (kostenlos), OpenAI oder ein OpenAI-kompatibler Provider (z.B. Ollama lokal)",
+                                    "AI API Key: Google Gemini (free), OpenAI or any OpenAI-compatible provider (e.g. Ollama local)"),
+                                ("M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z",
+                                    "Docker (für NAS-Deployment) oder .NET 8 Runtime (für lokalen Betrieb)",
+                                    "Docker (for NAS deployment) or .NET 8 Runtime (for local operation)")
+                            })
+                            {
+                                <div style="display:flex;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04);">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--c-accent)" stroke-width="1.8" style="width:16px;height:16px;flex-shrink:0;margin-top:2px;" aria-hidden="true"><path d="@icon"/></svg>
+                                    <p style="font-size:12px;color:var(--c-muted);margin:0;line-height:1.6;">@(AppLoc.Current=="de"?de:en)</p>
+                                </div>
+                            }
+                        </div>
+                    </div>
+
+                    <!-- KAPITEL 2: INSTALLATION -->
+                    <div class="sgroup">
+                        <p class="stitle">2 · @(AppLoc.Current=="de"?"Installation (Docker)":"Installation (Docker)")</p>
+                        <div class="sbox">
+                            <p style="font-size:12px;color:var(--c-muted);margin:0 0 10px;">@(AppLoc.Current=="de"?"Schnellstart mit Docker Compose:":"Quick start with Docker Compose:")</p>
+                            <div style="background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:12px;font-family:monospace;font-size:11px;color:#7dd3a8;line-height:1.8;overflow-x:auto;">
+                                version: '3.8'<br/>
+                                services:<br/>
+                                &nbsp;&nbsp;paperleo:<br/>
+                                &nbsp;&nbsp;&nbsp;&nbsp;image: ghcr.io/stl2020/paperleo:latest<br/>
+                                &nbsp;&nbsp;&nbsp;&nbsp;ports:<br/>
+                                &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;- "5080:8080"<br/>
+                                &nbsp;&nbsp;&nbsp;&nbsp;volumes:<br/>
+                                &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;- ./data:/app/data
+                            </div>
+                            <p style="font-size:11px;color:var(--c-muted);margin:10px 0 0;">@(AppLoc.Current=="de"?"Dann:":"Then:") <code>docker-compose up -d</code> → <code>http://localhost:5080</code></p>
+                        </div>
+                    </div>
+
+                    <!-- KAPITEL 3+4: VERBINDUNG & KI -->
+                    <div class="sgroup">
+                        <p class="stitle">3+4 · @(AppLoc.Current=="de"?"Verbindung & KI einrichten":"Connection & AI Setup")</p>
+                        <div class="sbox">
+                            @foreach (var (step, de, en) in new[]{
+                                ("1", "Einstellungen → Verbindung & KI öffnen", "Open Settings → Connection & AI"),
+                                ("2", "Paperless-URL eingeben (z.B. http://192.168.1.10:8000) und API-Token einfügen", "Enter Paperless URL (e.g. http://192.168.1.10:8000) and paste API Token"),
+                                ("3", "Verarbeitungs-Tag festlegen — nur Dokumente MIT diesem Tag werden von paperLeo verarbeitet", "Set processing tag — only documents WITH this tag will be processed by paperLeo"),
+                                ("4", "KI-Provider wählen: Gemini, OpenAI oder Custom. API-Key eintragen.", "Choose AI provider: Gemini, OpenAI or Custom. Enter API key."),
+                                ("5", "Beide Verbindungen mit dem Test-Button prüfen", "Test both connections with the Test button")
+                            })
+                            {
+                                <div style="display:flex;gap:12px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04);">
+                                    <div style="width:22px;height:22px;border-radius:50%;background:var(--c-accent);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">@step</div>
+                                    <p style="font-size:12px;color:var(--c-muted);margin:0;line-height:1.6;">@(AppLoc.Current=="de"?de:en)</p>
+                                </div>
+                            }
+                        </div>
+                    </div>
+
+                    <!-- KAPITEL 6: PROMPT-ASSISTENT -->
+                    <div class="sgroup">
+                        <p class="stitle">6 · @(AppLoc.Current=="de"?"Prompt-Assistent":"Prompt Assistant")</p>
+                        <div class="sbox">
+                            <p style="font-size:12px;color:var(--c-muted);margin:0 0 12px;line-height:1.6;">@(AppLoc.Current=="de"
+                                ?"Der Prompt-Assistent ist das Herzstück von paperLeo. Er führt dich in 9 Schritten durch die Personalisierung der KI."
+                                :"The Prompt Assistant is the heart of paperLeo. It guides you through 9 steps to personalize the AI.")</p>
+                            @foreach (var (step, de, en) in new[]{
+                                ("1","Setup-Check — Custom Fields prüfen und anlegen","Setup Check — verify and create custom fields"),
+                                ("2","Personen & Name — Haushaltsmitglieder, Familienangehörige","People & Name — household members, family"),
+                                ("3","Adressen — Wohn- und Arbeitsadressen, Mietobjekte","Addresses — home, work addresses, rental properties"),
+                                ("4","Fahrzeuge — Kennzeichen, Modell, Leasing, Person zuordnen","Vehicles — license plate, model, leasing, assign to person"),
+                                ("5","Arbeitgeber & Beruf — aktuell, frühere AG, selbstständig","Employer & Profession — current, previous, self-employed"),
+                                ("6","Steuer & Finanzen — Steuerregeln, Währung","Tax & Finance — tax rules, currency"),
+                                ("7","Verträge & Behörden — Vertragstypen, Dienstleister","Contracts & Authorities — contract types, service providers"),
+                                ("8","Titel-Builder — Format des Dokumententitels festlegen","Title Builder — define document title format"),
+                                ("9","Ergebnis — Prompt prüfen, speichern und aktivieren","Result — review, save and activate prompt")
+                            })
+                            {
+                                <div style="display:flex;gap:10px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.03);">
+                                    <span style="font-size:11px;font-weight:700;color:var(--c-accent);width:16px;flex-shrink:0;">@step</span>
+                                    <p style="font-size:12px;color:var(--c-muted);margin:0;">@(AppLoc.Current=="de"?de:en)</p>
+                                </div>
+                            }
+                        </div>
+                    </div>
+
+                    <!-- KAPITEL 11: ARCHIV-ANALYSE -->
+                    <div class="sgroup">
+                        <p class="stitle">11 · @(AppLoc.Current=="de"?"Archiv-Analyse":"Archive Analysis")</p>
+                        <div class="sbox">
+                            <p style="font-size:12px;color:var(--c-muted);margin:0 0 10px;line-height:1.6;">@(AppLoc.Current=="de"
+                                ?"Die Archiv-Analyse durchsucht dein bestehendes Paperless-Archiv und schlägt Daten für den Prompt-Assistenten vor — z.B. Namen, Adressen, Kennzeichen, Steuernummer, IBAN."
+                                :"Archive Analysis searches your existing Paperless archive and suggests data for the Prompt Assistant — e.g. names, addresses, license plates, tax number, IBAN.")</p>
+                            @foreach (var (de, en) in new[]{
+                                ("KI-Verbindung muss konfiguriert und getestet sein","AI connection must be configured and tested"),
+                                ("Menü: Analyse & Test → Archiv-Analyse → Analyse starten","Menu: Analysis & Test → Archive Analysis → Start analysis"),
+                                ("paperLeo sucht gezielt nach Lohnabrechnungen, Steuerbescheiden, Kfz-Dokumenten etc.","paperLeo searches specifically for payslips, tax assessments, vehicle documents etc."),
+                                ("Gefundene Felder einzeln bestätigen oder ablehnen","Confirm or reject each found field individually"),
+                                ("Button 'In Prompt-Assistenten uebernehmen' uebertraegt alle Daten","Button 'Import to Prompt Assistant' transfers all data"),
+                                ("Dauer: 2-5 Minuten je nach Archivgröße","Duration: 2-5 minutes depending on archive size")
+                            })
+                            {
+                                <div style="display:flex;gap:8px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.03);">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--c-accent)" stroke-width="2" style="width:13px;height:13px;flex-shrink:0;margin-top:2px;"><polyline points="20 6 9 17 4 12"/></svg>
+                                    <p style="font-size:12px;color:var(--c-muted);margin:0;">@(AppLoc.Current=="de"?de:en)</p>
+                                </div>
+                            }
+                        </div>
+                    </div>
+
+                    <!-- KAPITEL 12: TITEL-BUILDER -->
+                    <div class="sgroup">
+                        <p class="stitle">12 · @(AppLoc.Current=="de"?"Titel-Builder":"Title Builder")</p>
+                        <div class="sbox">
+                            <p style="font-size:12px;color:var(--c-muted);margin:0 0 10px;line-height:1.6;">@(AppLoc.Current=="de"
+                                ?"Der Titel-Builder (Pro) definiert das Format automatisch generierter Dokumenttitel. Bausteine können kombiniert und in der Reihenfolge verschoben werden."
+                                :"The Title Builder (Pro) defines the format of automatically generated document titles. Building blocks can be combined and reordered.")</p>
+                            <p style="font-size:12px;font-weight:600;color:var(--c-text);margin:0 0 6px;">@(AppLoc.Current=="de"?"Verfügbare Bausteine:":"Available building blocks:")</p>
+                            <div style="display:flex;flex-wrap:wrap;gap:5px;">
+                                @foreach (var b in new[]{"Korrespondent","Dokumenttyp","Datum","Betrag","Rechnungsnummer","Belegnummer","Beschreibung","Fahrzeug","Kennzeichen"})
+                                {
+                                    <span style="font-size:11px;background:rgba(29,158,117,.08);border:1px solid rgba(29,158,117,.2);border-radius:5px;padding:2px 8px;color:var(--c-accent);">@b</span>
+                                }
+                            </div>
+                            <p style="font-size:11px;color:var(--c-muted);margin:10px 0 0;">@(AppLoc.Current=="de"
+                                ?"Beispiel: Korrespondent - Dokumenttyp - Datum (z.B. Telekom - Rechnung - 2025-03)"
+                                :"Example: Correspondent - Document Type - Date (e.g. Telekom - Invoice - 2025-03)")</p>
+                        </div>
+                    </div>
+
+                    <!-- KAPITEL 13: DOKUMENT TESTEN -->
+                    <div class="sgroup">
+                        <p class="stitle">13 · @(AppLoc.Current=="de"?"Dokument testen":"Test Document")</p>
+                        <div class="sbox">
+                            <p style="font-size:12px;color:var(--c-muted);margin:0 0 10px;line-height:1.6;">@(AppLoc.Current=="de"
+                                ?"Mit dem Menupunkt 'Dokument testen' kannst du ein Dokument manuell durch die KI verarbeiten lassen - ohne Paperless-Auswirkung."
+                                :"With 'Test Document' you can manually process a document through AI - without affecting Paperless.")</p>
+                            @foreach (var (de, en) in new[]{
+                                ("Menü: Analyse & Test → Dokument testen","Menu: Analysis & Test → Test Document"),
+                                ("Paperless-Dokument-ID oder Text eingeben","Enter Paperless document ID or text"),
+                                ("KI verarbeitet das Dokument und zeigt Titel, Tags, Korrespondent etc.","AI processes the document and shows title, tags, correspondent etc."),
+                                ("Kein Einfluss auf Paperless — rein zum Testen","No effect on Paperless — for testing only")
+                            })
+                            {
+                                <div style="display:flex;gap:8px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.03);">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--c-accent)" stroke-width="2" style="width:13px;height:13px;flex-shrink:0;margin-top:2px;"><polyline points="20 6 9 17 4 12"/></svg>
+                                    <p style="font-size:12px;color:var(--c-muted);margin:0;">@(AppLoc.Current=="de"?de:en)</p>
+                                </div>
+                            }
+                        </div>
+                    </div>
+
+                    <!-- KAPITEL 14: BACKUP -->
+                    <div class="sgroup">
+                        <p class="stitle">14 · Backup</p>
+                        <div class="sbox">
+                            <p style="font-size:12px;color:var(--c-muted);margin:0 0 10px;line-height:1.6;">@(AppLoc.Current=="de"
+                                ?"Alle Einstellungen werden in data/settings.env gespeichert. Diese Datei enthält alle Konfigurationsdaten inkl. API-Keys und Lizenzschlüssel."
+                                :"All settings are stored in data/settings.env. This file contains all configuration data including API keys and license key.")</p>
+                            @foreach (var (de, en) in new[]{
+                                ("Export: Menü → Backup → Alle Einstellungen exportieren → .env-Datei wird heruntergeladen","Export: Menu → Backup → Export all settings → .env file is downloaded"),
+                                ("Import: Backup-Datei auswählen → Einstellungen werden sofort übernommen","Import: Select backup file → settings are applied immediately"),
+                                ("Docker: Volume /app/data regelmäßig sichern","Docker: Back up volume /app/data regularly"),
+                                ("Nach Import: Seite lädt automatisch neu","After import: page reloads automatically")
+                            })
+                            {
+                                <div style="display:flex;gap:8px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.03);">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--c-accent)" stroke-width="2" style="width:13px;height:13px;flex-shrink:0;margin-top:2px;"><polyline points="20 6 9 17 4 12"/></svg>
+                                    <p style="font-size:12px;color:var(--c-muted);margin:0;">@(AppLoc.Current=="de"?de:en)</p>
+                                </div>
+                            }
+                        </div>
+                    </div>
+
+                    <!-- KAPITEL 16: TROUBLESHOOTING -->
+                    <div class="sgroup">
+                        <p class="stitle">16 · Troubleshooting</p>
+                        <div class="sbox">
+                            @foreach (var (problem, de, en) in new[]{
+                                ("406 Accept Header",
+                                    "Paperless 3.x akzeptiert kein version= im Accept-Header. paperLeo v6+ sendet automatisch application/json.",
+                                    "Paperless 3.x does not accept version= in the Accept header. paperLeo v6+ sends application/json automatically."),
+                                ("Verbindung schlägt fehl (Docker)",
+                                    "Im Docker-Netzwerk muss die Paperless-URL den Container-Namen nutzen: http://Paperless-Webserver:8000 statt IP",
+                                    "In Docker network, use the container name in Paperless URL: http://Paperless-Webserver:8000 instead of IP"),
+                                ("Dokumente werden nicht verarbeitet",
+                                    "Verarbeitungs-Tag stimmt exakt? Auto-Modus eingeschaltet? Verbindungstest grün?",
+                                    "Processing tag matches exactly? Auto mode enabled? Connection test green?"),
+                                ("KI-Fehler 429",
+                                    "Rate Limit erreicht. Scan-Intervall erhöhen oder auf Gemini Flash wechseln (großzügiges Free Tier).",
+                                    "Rate limit reached. Increase scan interval or switch to Gemini Flash (generous free tier)."),
+                                ("Einstellungen gehen verloren",
+                                    "Docker-Volume korrekt gemountet? /app/data muss persistent gemountet sein.",
+                                    "Docker volume correctly mounted? /app/data must be persistently mounted.")
+                            })
+                            {
+                                <div style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,.04);">
+                                    <p style="font-size:12px;font-weight:600;color:var(--c-text);margin:0 0 3px;">@problem</p>
+                                    <p style="font-size:11px;color:var(--c-muted);margin:0;line-height:1.5;">@(AppLoc.Current=="de"?de:en)</p>
+                                </div>
+                            }
+                        </div>
+                    </div>
+
+                    <!-- SUPPORT & LINKS -->
+                    <div class="sgroup">
+                        <p class="stitle">@Loc["help.support"]</p>
+                        <div class="sbox">
+                            <div style="display:flex;flex-direction:column;gap:10px;">
+                                <a href="https://github.com/STL2020/paperleo" target="_blank" style="display:flex;align-items:center;gap:10px;padding:10px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.07);border-radius:8px;text-decoration:none;transition:background .12s;" onmouseover="this.style.background='rgba(255,255,255,.05)'" onmouseout="this.style.background='rgba(255,255,255,.02)'">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--c-accent)" stroke-width="1.8" style="width:16px;height:16px;flex-shrink:0;" aria-hidden="true"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
+                                    <div>
+                                        <p style="font-size:12px;font-weight:600;color:var(--c-text);margin:0 0 1px;">@Loc["help.github"]</p>
+                                        <p style="font-size:11px;color:var(--c-muted);margin:0;">github.com/STL2020/paperleo</p>
+                                    </div>
+                                </a>
+                                <a href="https://payhip.com/b/4auSd" target="_blank" style="display:flex;align-items:center;gap:10px;padding:10px;background:rgba(29,158,117,.05);border:1px solid rgba(29,158,117,.2);border-radius:8px;text-decoration:none;transition:background .12s;" onmouseover="this.style.background='rgba(29,158,117,.1)'" onmouseout="this.style.background='rgba(29,158,117,.05)'">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--c-accent)" stroke-width="1.8" style="width:16px;height:16px;flex-shrink:0;" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                                    <div>
+                                        <p style="font-size:12px;font-weight:600;color:var(--c-accent);margin:0 0 1px;">@Loc["help.buy_pro"]</p>
+                                        <p style="font-size:11px;color:var(--c-muted);margin:0;">@Loc["help.buy_sub"]</p>
+                                    </div>
+                                </a>
+                            </div>
+                            <div style="margin-top:12px;padding:10px;background:rgba(255,255,255,.02);border-radius:8px;text-align:center;">
+                                <p style="font-size:11px;color:var(--c-muted);margin:0;">paperLeo @(AppInfo.Version) · © Löwemann IT · @Loc["help.footer"]</p>
+                            </div>
+                        </div>
+                    </div>
+                }
+                }
+        </div>
+    }
+</div>
+
+<!-- ConfirmDialoge global am Ende der Komponente - NICHT innerhalb von Tab-Content-Blöcken -->
+<ConfirmDialog @ref="_confirmTags" Title="Alle Tags löschen"
+    Text="Alle Tags werden unwiderruflich aus Paperless gelöscht. Dokumente verlieren ihre Tags. Bitte vorher ein Backup erstellen."
+    ConfirmLabel="Alle Tags löschen" TypeToConfirm="LÖSCHEN"
+    OnConfirmed="DeleteAllTagsConfirmed" />
+<ConfirmDialog @ref="_confirmDocTypes" Title="Alle Dokumenttypen löschen"
+    Text="Alle Dokumenttypen werden unwiderruflich aus Paperless gelöscht."
+    ConfirmLabel="Alle Dokumenttypen löschen" TypeToConfirm="LÖSCHEN"
+    OnConfirmed="DeleteAllDocTypesConfirmed" />
+<ConfirmDialog @ref="_confirmCorrespondents" Title="Alle Korrespondenten löschen"
+    Text="Alle Korrespondenten werden unwiderruflich aus Paperless gelöscht."
+    ConfirmLabel="Alle Korrespondenten löschen" TypeToConfirm="LÖSCHEN"
+    OnConfirmed="DeleteAllCorrespondentsConfirmed" />
+<ConfirmDialog @ref="_confirmFullReset" Title="Kompletter Reset"
+    Text="Tags, Dokumenttypen UND Korrespondenten werden alle gelöscht. Diese Aktion ist nicht umkehrbar."
+    ConfirmLabel="Alles löschen" TypeToConfirm="ALLES LÖSCHEN"
+    OnConfirmed="FullResetConfirmed" />
+<ConfirmDialog @ref="_confirmResetIndex" Title="Verarbeitungs-Tag zurücksetzen"
+    Text="Alle Dokumente werden als 'unverarbeitet' markiert und beim nächsten Scan neu analysiert."
+    ConfirmLabel="Zurücksetzen"
+    OnConfirmed="ResetIndexConfirmed" />
+
+<style>
+    .settings-header { padding: 14px 24px; border-bottom: 0.5px solid rgba(255,255,255,0.06); }
+    .settings-layout { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+    .settings-nav {
+        width: 190px; flex-shrink: 0;
+        border-right: 1px solid rgba(255,255,255,0.06);
+        padding: 12px 6px;
+        display: flex; flex-direction: column; gap: 1px;
+        overflow-y: auto;
+        background: rgba(0,0,0,0.15);
+    }
+    .settings-nav-item {
+        display: flex; align-items: center; gap: 10px;
+        padding: 9px 12px;
+        border-radius: 7px; border: none; border-left: 3px solid transparent;
+        background: none; cursor: pointer;
+        font-size: 13px; color: #94a3b8;
+        width: 100%; text-align: left;
+        transition: all 0.12s;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .settings-nav-item:hover { background: rgba(255,255,255,0.05); color: #e2e8f0; }
+    .settings-nav-item.active {
+        background: rgba(99,102,241,0.08);
+        color: #a5b4fc;
+        font-weight: 500;
+        border-left-color: #6366f1;
+    }
+    .nav-icon { width: 16px; flex-shrink: 0; opacity: 0.7; font-size: 14px; }
+    .settings-nav-item.active .nav-icon { opacity: 1; }
+    .settings-content { flex: 1; overflow-y: auto; padding: 18px 20px; display: flex; flex-direction: column; gap: 18px; }
+    .sgroup { display: flex; flex-direction: column; gap: 6px; }
+    .stitle { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.07em; margin: 0; }
+    .sbox { background: rgba(255,255,255,0.02); border: 0.5px solid rgba(255,255,255,0.07); border-radius: 10px; padding: 14px; }
+    .sfield { display: flex; flex-direction: column; gap: 3px; margin-bottom: 10px; }
+    .sfield:last-child { margin-bottom: 0; }
+    .sfield label { font-size: 11px; font-weight: 500; color: var(--muted); }
+    .shint { font-size: 11px; color: var(--muted); margin: 2px 0 0; line-height: 1.4; }
+    .saction { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 7px 0; border-bottom: 0.5px solid rgba(255,255,255,0.04); }
+    .toggle-row:last-child { border-bottom: none; }
+    .preset-btn { padding: 5px 10px; font-size: 12px; border: 0.5px solid rgba(255,255,255,0.1); border-radius: 6px; background: rgba(255,255,255,0.03); cursor: pointer; color: var(--text); transition: background 0.12s; display:inline-flex;align-items:center;gap:5px; }
+    .preset-btn:hover { background: rgba(255,255,255,0.07); }
+    .preset-btn.active { background: rgba(29,158,117,0.12); border-color: rgba(29,158,117,0.3); color: var(--accent); }
+    .demo-hint { background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.15); border-radius: 6px; padding: 7px 10px; font-size: 11px; color: #fbbf24; margin-bottom: 8px; }
+    .warn-hint { background: rgba(220,38,38,0.08); border: 1px solid rgba(220,38,38,0.15); border-radius: 6px; padding: 7px 10px; font-size: 11px; color: #f87171; margin-bottom: 8px; display: flex; align-items: center; }
+    .del-btn { padding: 9px 12px; border-radius: 7px; border: 0.5px solid rgba(220,38,38,0.2); background: rgba(220,38,38,0.04); color: #f87171; cursor: pointer; font-size: 13px; text-align: left; transition: background 0.12s; width: 100%; }
+    .del-btn:hover { background: rgba(220,38,38,0.09); }
+    .del-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .del-btn.strong { border-color: rgba(220,38,38,0.35); background: rgba(220,38,38,0.08); font-weight: 500; }
+    .del-btn.neutral { border-color: rgba(255,255,255,0.08); background: rgba(255,255,255,0.02); color: var(--muted); }
+    .del-btn.neutral:hover { background: rgba(255,255,255,0.05); color: var(--text); }
+    .save-row { display: flex; align-items: center; gap: 10px; padding: 12px 16px; position: sticky; bottom: 0; background: rgba(13,26,39,0.97); backdrop-filter: blur(8px); border-top: 1px solid rgba(29,158,117,0.25); margin: 0 -16px; z-index: 10; }
+    .btn-save { background: var(--c-accent) !important; color: #fff !important; font-weight: 700 !important; padding: 10px 24px !important; font-size: 14px !important; min-width: 140px; display: inline-flex; align-items: center; gap: 8px; }
+    .btn-save::before { content: ""; display: inline-block; width: 15px; height: 15px; background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z'/%3E%3Cpolyline points='17 21 17 13 7 13 7 21'/%3E%3Cpolyline points='7 3 7 8 15 8'/%3E%3C/svg%3E"); background-size: contain; background-repeat: no-repeat; flex-shrink: 0; }
+</style>
+
+@code {
+    private bool _loading = true;
+    private string? _loadError;
+    private bool _proMode;
+    private SettingsDto _settings = new();
+
+    private bool _saving;
+    private string? _savedMessage;
+    private bool _loadingFields, _creatingField;
+
+    private bool _testingPaperless, _testingLlm;
+    private ConnectionTestResult? _paperlessTestResult, _llmTestResult;
+
+    private bool _suggestingTags, _suggestingDocTypes, _seedingTags, _seedingDocTypes;
+    private bool _importingTagsFromPaperless, _importingDocTypesFromPaperless;
+    private SuggestVocabularyResult? _suggestTagsResult, _suggestDocTypesResult;
+    private SeedTagsResult? _seedTagsResult, _seedDocTypesResult;
+
+    // Lizenz
+    private string _licenseKey = "";
+    private string? _licenseMessage;
+    private bool _licenseSuccess;
+    private bool _activatingLicense;
+
+    private bool _exportingSettings;
+    private bool _importExportSuccess;
+    private string? _importExportMessage;
+
+    private async Task ExportSettings()
+    {
+        _exportingSettings = true; StateHasChanged();
+        try
+        {
+            var content = await Api.ExportSettingsAsync();
+            if (!string.IsNullOrEmpty(content))
+            {
+                var fileName = $"paperleo-settings-{DateTime.Now:yyyy-MM-dd}.env";
+                await JS.InvokeVoidAsync("downloadTextFile", fileName, content);
+                _importExportSuccess = true;
+                _importExportMessage = "Export erfolgreich ✓";
+            }
+            else { _importExportSuccess = false; _importExportMessage = "Export fehlgeschlagen."; }
+        }
+        catch (Exception ex) { _importExportSuccess = false; _importExportMessage = ex.Message; }
+        _exportingSettings = false;
+        await Task.Delay(3000); _importExportMessage = null; StateHasChanged();
+    }
+
+    private async Task ImportSettings(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            using var stream = e.File.OpenReadStream(maxAllowedSize: 1024 * 1024);
+            using var reader = new StreamReader(stream);
+            var content = await reader.ReadToEndAsync();
+            var (success, msg) = await Api.ImportSettingsAsync(content);
+            _importExportSuccess = success;
+            _importExportMessage = msg;
+            if (success)
+            {
+                await Task.Delay(1500);
+                Nav.NavigateTo("/settings", forceLoad: true);
+            }
+        }
+        catch (Exception ex) { _importExportSuccess = false; _importExportMessage = ex.Message; }
+        StateHasChanged();
+    }
+
+    private async Task ActivateLicense()
+    {
+        if (string.IsNullOrWhiteSpace(_licenseKey)) return;
+        _activatingLicense = true; _licenseMessage = null; StateHasChanged();
+        try
+        {
+            var result = await Api.ActivateLicenseAsync(_licenseKey.Trim());
+            if (result.Success)
+            {
+                _licenseSuccess = true;
+                _licenseMessage = "Lizenz aktiviert — paperLeo Pro ist jetzt freigeschaltet!";
+                _settings.PremiumLicenseKey = _licenseKey.Trim();
+                await Save();
+            }
+            else
+            {
+                _licenseSuccess = false;
+                _licenseMessage = result.Message ?? "Ungültiger Lizenzschlüssel.";
+            }
+        }
+        catch { _licenseSuccess = false; _licenseMessage = "Verbindungsfehler bei der Lizenzprüfung."; }
+        _activatingLicense = false; StateHasChanged();
+    }
+
+    private async Task DeactivateLicense()
+    {
+        _settings.PremiumLicenseKey = "";
+        _licenseKey = "";
+        _licenseMessage = "Lizenz deaktiviert.";
+        _licenseSuccess = false;
+        await Save();
+    }
+
+    private bool _promptContainsPersonalData;
+    private string? _importMessage;
+
+    private string _newFieldName = "", _newFieldType = "string";
+    private string? _createFieldMessage;
+    private List<CustomFieldDto> _customFields = new();
+    private BackfillProgress? _backfillProgress;
+    private System.Threading.Timer? _backfillTimer;
+
+    // Prompt-Assistent Records
+    public record AssistPerson(string Name, string Role);
+    public record AssistAddress(string Kurzname, string Adresse, bool IsMietobjekt);
+    public record AssistVehicle(string Modell, string Kennzeichen, bool IsLeasing, string PersonName = "");
+    public record AssistArbeitgeber(string Firma, string PersonName = "", string? FruehereArbeitgeber = null, bool Selbststaendig = false);
+
+    // Titel-Builder Bausteine
+    private List<string> _titelBausteine = new() { "Korrespondent", "Dokumenttyp", "Datum" };
+    private static readonly string[] AlleTitelBausteine = { "Korrespondent", "Dokumenttyp", "Datum", "Betrag", "Rechnungsnummer", "Belegnummer", "Beschreibung", "Fahrzeug", "Kennzeichen" };
+    private string _titelTrennzeichen = " – ";
+
+    // Prompt-Assistent State
+    private int _promptStep = 1;
+    private string _promptStepLabel => _promptStep switch {
+        1 => "Setup-Check", 2 => "Personen", 3 => "Adressen",
+        4 => "Fahrzeuge", 5 => "Arbeitgeber & Beruf", 6 => "Steuer & Finanzen",
+        7 => "Verträge & Behörden", 8 => "Titel-Builder", _ => "Ergebnis"
+    };
+    private List<AssistPerson> _assistPersons = new() { new AssistPerson(string.Empty, "Hauptnutzer") };
+    private List<AssistAddress> _assistAddresses = new() { new AssistAddress(string.Empty, string.Empty, false) };
+    private List<AssistVehicle> _assistVehicles = new();
+    private List<AssistArbeitgeber> _assistArbeitgeber = new() { new AssistArbeitgeber(string.Empty) };
+    private string _promptCurrency = "EUR";
+    private string _generatedPrompt = "";
+    private bool _promptSaved;
+    private bool _creatingMissingFields;
+    private string _setupMessage = "";
+    private List<string> _cfNames = new();
+
+    // Steuer-Checkboxen
+    private bool _taxHandwerker = true;
+    private bool _taxWerbungskosten = true;
+    private bool _taxSpenden = false;
+    private bool _taxKirche = false;
+    private bool _taxVermietung = true;
+    private bool _taxVersicherung = false;
+
+    private string BuildTaxRulePreview()
+    {
+        var parts = new List<string>();
+        if (_taxHandwerker)    parts.Add("Handwerker-Rechnung im Haushalt");
+        if (_taxWerbungskosten) parts.Add("Arbeitsmittel/Homeoffice");
+        if (_taxVermietung)    parts.Add("Mietobjekt-Kosten/-Einnahmen");
+        if (_taxVersicherung)  parts.Add("Versicherungsbeitrag");
+        if (_taxSpenden)       parts.Add("Spendenquittung");
+        if (_taxKirche)        parts.Add("Kirchensteuerbescheid");
+        return parts.Any() ? string.Join(" ODER ", parts) : "(keine Regeln definiert)";
+    }
+
+    private string BuildTaxCategories()
+    {
+        var cats = new List<string>();
+        if (_taxHandwerker)    cats.Add("Handwerkerleistungen §35a EStG");
+        if (_taxWerbungskosten) cats.Add("Werbungskosten / berufliche Ausgaben");
+        if (_taxSpenden)       cats.Add("Spenden / Zuwendungen");
+        if (_taxKirche)        cats.Add("Kirchensteuer");
+        if (_taxVermietung)    cats.Add("Vermietungskosten und -einnahmen");
+        if (_taxVersicherung)  cats.Add("Versicherungsbeiträge");
+        return string.Join(", ", cats);
+    }
+
+    private void AddPerson() => _assistPersons.Add(new AssistPerson(string.Empty, "Hauptnutzer"));
+    private void AddAddress() => _assistAddresses.Add(new AssistAddress(string.Empty, string.Empty, false));
+    private void AddVehicle() => _assistVehicles.Add(new AssistVehicle(string.Empty, string.Empty, false));
+    private void UpdatePersonName(int i, string v) { if(i<_assistPersons.Count) _assistPersons[i] = _assistPersons[i] with { Name = v }; }
+    private void UpdatePersonRole(int i, string v) { if(i<_assistPersons.Count) _assistPersons[i] = _assistPersons[i] with { Role = v }; }
+    private void UpdateAddressKurzname(int i, string v) { if(i<_assistAddresses.Count) _assistAddresses[i] = _assistAddresses[i] with { Kurzname = v }; }
+    private void UpdateAddressAdresse(int i, string v) { if(i<_assistAddresses.Count) _assistAddresses[i] = _assistAddresses[i] with { Adresse = v }; }
+    private void UpdateAddressType(int i, string? v) { if(i<_assistAddresses.Count) _assistAddresses[i] = _assistAddresses[i] with { IsMietobjekt = v == "Mietobjekt" }; }
+    private void UpdateVehicleModell(int i, string v) { if(i<_assistVehicles.Count) _assistVehicles[i] = _assistVehicles[i] with { Modell = v }; }
+    private void UpdateVehicleKennzeichen(int i, string v) { if(i<_assistVehicles.Count) _assistVehicles[i] = _assistVehicles[i] with { Kennzeichen = v }; }
+    private void UpdateVehicleLeasing(int i, bool v) { if(i<_assistVehicles.Count) _assistVehicles[i] = _assistVehicles[i] with { IsLeasing = v }; }
+    private void UpdateVehiclePerson(int i, string v) { if(i<_assistVehicles.Count) _assistVehicles[i] = _assistVehicles[i] with { PersonName = v }; }
+    private void UpdateAG(int i, string v) { if(i<_assistArbeitgeber.Count) _assistArbeitgeber[i] = _assistArbeitgeber[i] with { Firma = v }; }
+    private void UpdateAGPerson(int i, string v) { if(i<_assistArbeitgeber.Count) _assistArbeitgeber[i] = _assistArbeitgeber[i] with { PersonName = v }; }
+    private void UpdateAGSelbst(int i, bool v) { if(i<_assistArbeitgeber.Count) _assistArbeitgeber[i] = _assistArbeitgeber[i] with { Selbststaendig = v }; }
+    private void UpdateAGFrueher(int i, string v) { if(i<_assistArbeitgeber.Count) _assistArbeitgeber[i] = _assistArbeitgeber[i] with { FruehereArbeitgeber = v }; }
+
+    private static readonly string[] KnownFields = { "Rechnungsnummer","Belegnummer","Rechnungsbetrag","Seriennummer","Fahrzeug","Gewerk_Dienstleistung","Objekt / Adresse","Familienmitglied","Vertragsende / Laufzeit bis","Vertragsnummer / Kundennummer","Fälligkeitsdatum","Steuer","Mietobjekt" };
+    private static readonly string[] RequiredFields = { "Steuer","Mietobjekt","Rechnungsbetrag","Rechnungsnummer","Belegnummer","Seriennummer","Fahrzeug","Vertragsnummer","Vertragsende","Fälligkeitsdatum","Gewerk_Dienstleistung","Objekt / Adresse","Familienmitglied" };
+    private int SetupFound => RequiredFields.Count(r => _cfNames.Any(n => string.Equals(n,r,StringComparison.OrdinalIgnoreCase)));
+    private List<string> SetupMissing => RequiredFields.Where(r => !_cfNames.Any(n => string.Equals(n,r,StringComparison.OrdinalIgnoreCase))).ToList();
+    private int SetupPct => RequiredFields.Length > 0 ? (int)(SetupFound * 100.0 / RequiredFields.Length) : 100;
+
+    private bool QPersons => _assistPersons.Any(p => !string.IsNullOrWhiteSpace(p.Name));
+    private bool QAddresses => _assistAddresses.Any(a => !string.IsNullOrWhiteSpace(a.Adresse));
+    private bool QTax => _taxHandwerker || _taxWerbungskosten || _taxVermietung || _taxVersicherung || _taxSpenden || _taxKirche;
+    private bool QCF => _cfNames.Count >= 10;
+    private int QScorePct => new[] {QPersons, QAddresses, QTax, QCF}.Count(x => x) * 25;
+
+    private void AdvancePromptStep()
+    {
+        if (_promptStep == 8) BuildPrompt();
+        _promptStep++;
+    }
+
+    private void BuildPrompt()
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("Du bist ein präziser KI-Archivar für ein deutsches Privatarchiv. Deine Aufgabe ist die vollständige Metadatenextraktion aus Dokumenten.");
+        sb.AppendLine();
+        sb.AppendLine("AUSGABE: Antworte AUSSCHLIESSLICH mit einem validen JSON-Objekt. Kein Text davor oder danach. Kein Markdown.");
+        sb.AppendLine();
+        sb.AppendLine("JSON-SCHEMA (alle Felder immer ausgeben, fehlende Werte als null):");
+        sb.AppendLine("{");
+        sb.AppendLine("  \"title\": \"Prägnanter Dokumenttitel (max. 60 Zeichen, deutsch)\",");
+        sb.AppendLine("  \"created\": \"YYYY-MM-DD oder null\",");
+        sb.AppendLine("  \"correspondent\": \"Markenname ohne Rechtsform (GmbH/AG/e.V. weglassen) oder null\",");
+        sb.AppendLine("  \"document_type\": \"Aus Liste [document_types] wählen oder null\",");
+        sb.AppendLine("  \"tags\": [\"Aus Liste [tags] wählen\"],");
+        sb.AppendLine("  \"custom_fields\": {");
+        sb.AppendLine("    \"Rechnungsnummer\": \"String oder null\",");
+        sb.AppendLine("    \"Belegnummer\": \"String oder null\",");
+        sb.AppendLine("    \"Rechnungsbetrag\": \"Zahl mit Punkt als Dezimaltrennzeichen z.B. 1234.56 oder null\",");
+        sb.AppendLine("    \"Seriennummer\": \"String oder null\",");
+        sb.AppendLine("    \"Fahrzeug\": \"Marke Modell (Kennzeichen) oder null\",");
+        sb.AppendLine("    \"Gewerk_Dienstleistung\": \"Art der Handwerksleistung oder null\",");
+        sb.AppendLine("    \"Objekt / Adresse\": \"Adresse aus ADRESSEN-Liste oder null\",");
+        sb.AppendLine("    \"Familienmitglied\": \"Name aus PERSONEN-Liste oder null\",");
+        sb.AppendLine("    \"Vertragsende\": \"YYYY-MM-DD oder null\",");
+        sb.AppendLine("    \"Vertragsnummer\": \"String oder null\",");
+        sb.AppendLine("    \"Fälligkeitsdatum\": \"YYYY-MM-DD oder null\",");
+        sb.AppendLine("    \"Steuer\": true/false,");
+        sb.AppendLine("    \"Mietobjekt\": true/false");
+        sb.AppendLine("  }");
+        sb.AppendLine("}");
+        sb.AppendLine();
+        sb.AppendLine("KORRESPONDENTEN-REGELN:");
+        sb.AppendLine("- Immer Markenname, nie Rechtsform: 'Telekom' nicht 'Deutsche Telekom GmbH'");
+        sb.AppendLine("- Behörden vollständig: 'Finanzamt Remagen', 'Krankenkasse TK'");
+        sb.AppendLine("- Unbekannter Absender: null (nicht raten)");
+        sb.AppendLine();
+        sb.AppendLine("TITEL-REGELN:");
+        sb.AppendLine("- Format: [Korrespondent] – [Dokumentart] [Datum/Zeitraum]");
+        sb.AppendLine("- Beispiele: 'Telekom – Rechnung Jan 2025', 'Finanzamt – Steuerbescheid 2024'");
+        sb.AppendLine("- Max. 60 Zeichen, deutsch, keine Abkürzungen");
+        sb.AppendLine();
+        sb.AppendLine("DATUM-REGELN:");
+        sb.AppendLine("- Immer ISO 8601: YYYY-MM-DD");
+        sb.AppendLine("- Dokumentdatum = Ausstellungsdatum, nicht Scanndatum");
+        sb.AppendLine("- Vertragsende = letzter Gültigkeitstag");
+        sb.AppendLine();
+        sb.AppendLine("PRIORISIERUNG bei Mehrdeutigkeit:");
+        sb.AppendLine("- Steuer=true hat Vorrang wenn Dokument EINDEUTIG steuerrelevant ist");
+        sb.AppendLine("- Mietobjekt=true nur wenn Adresse EXAKT einer Mietobjekt-Adresse entspricht");
+        sb.AppendLine("- Tags: max. 5, nur wenn eindeutig zutreffend");
+        sb.AppendLine();
+        sb.AppendLine();
+
+        var persons = _assistPersons.Where(p => !string.IsNullOrWhiteSpace(p.Name)).ToList();
+        if (persons.Any())
+        {
+            sb.AppendLine("PERSONEN (für Feld family_member):");
+            foreach (var p in persons)
+                sb.AppendLine($"- {p.Name} ({p.Role})");
+            var primary = persons.FirstOrDefault(p => p.Role == "Hauptnutzer");
+            if (primary != null) sb.AppendLine($"Primärnutzer: {primary.Name}");
+            sb.AppendLine();
+        }
+
+        var addresses = _assistAddresses.Where(a => !string.IsNullOrWhiteSpace(a.Adresse)).ToList();
+        if (addresses.Any())
+        {
+            sb.AppendLine("ADRESSEN (für Feld property_address und Mietobjekt-Erkennung):");
+            foreach (var a in addresses)
+                sb.AppendLine($"- {a.Kurzname}: {a.Adresse} → {(a.IsMietobjekt ? "Mietobjekt = ja, Kosten steuerrelevant" : "Privatbesitz")}");
+            sb.AppendLine();
+        }
+
+        var vehicles = _assistVehicles.Where(v => !string.IsNullOrWhiteSpace(v.Modell)).ToList();
+        if (vehicles.Any())
+        {
+            sb.AppendLine("FAHRZEUGE:");
+            foreach (var v in vehicles)
+                sb.AppendLine($"- {v.Modell}{(string.IsNullOrWhiteSpace(v.Kennzeichen) ? "" : $" ({v.Kennzeichen})")}{(v.IsLeasing ? " [Leasing]" : "")}");
+            sb.AppendLine();
+        }
+
+        if (!string.IsNullOrWhiteSpace(_assistArbeitgeber.FirstOrDefault()?.Firma))
+        {
+            sb.AppendLine("ARBEITGEBER:");
+            foreach (var ag in _assistArbeitgeber.Where(a => !string.IsNullOrWhiteSpace(a.Firma)))
+            {
+                sb.Append($"- {ag.Firma}");
+                if (!string.IsNullOrWhiteSpace(ag.PersonName)) sb.Append($" (für {ag.PersonName})");
+                if (!string.IsNullOrWhiteSpace(ag.FruehereArbeitgeber)) sb.Append($" · Früher: {ag.FruehereArbeitgeber}");
+                if (ag.Selbststaendig) sb.Append(" · Selbstständig/Nebengewerbe");
+                sb.AppendLine();
+            }
+            sb.AppendLine("Gehaltsabrechnungen, Lohnsteuerbescheinigungen und Dienstreise-Belege dem jeweiligen Arbeitgeber zuordnen.");
+            sb.AppendLine();
+        }
+
+        var taxRules = new List<string>();
+        if (_taxHandwerker)    taxRules.Add("Handwerkerleistungen im Privathaushalt (§35a EStG) + Rechnung");
+        if (_taxWerbungskosten) taxRules.Add("Arbeitsmittel, Homeoffice, Fortbildung");
+        if (_taxVermietung)    taxRules.Add("Kosten oder Einnahmen für Mietobjekte");
+        if (_taxVersicherung)  taxRules.Add("Kranken-, Lebens- oder Rentenversicherungsbeiträge");
+        if (_taxSpenden)       taxRules.Add("Spendenquittungen und Zuwendungsbestätigungen");
+        if (_taxKirche)        taxRules.Add("Kirchensteuerbescheide");
+        taxRules.Add("Steuerbescheide direkt vom Finanzamt");
+        sb.AppendLine("STEUER-REGELN (Feld is_tax_relevant = true WENN):");
+        foreach (var r in taxRules) sb.AppendLine($"- {r}");
+        sb.AppendLine($"BETRÄGE: Währung {_promptCurrency}, Format: 1234.56 (Punkt, 2 Dezimalstellen)");
+        sb.AppendLine();
+
+        var vts = new List<string>();
+        if (_vtStrom) vts.Add("Strom/Gas"); if (_vtInternet) vts.Add("Internet/Telefon");
+        if (_vtVers) vts.Add("Versicherungen"); if (_vtKV) vts.Add("Krankenversicherung");
+        if (_vtMiete) vts.Add("Mietverträge"); if (_vtLeasing) vts.Add("Leasing/Kredit");
+        if (_vtAlters) vts.Add("Altersvorsorge"); if (_vtWartung) vts.Add("Wartungsverträge");
+        if (vts.Any()) sb.AppendLine($"VERTRAGSTYPEN (verbessert Laufzeit-Erkennung): {string.Join(", ", vts)}");
+
+        var bhs = new List<string>();
+        if (_bhFinanz) bhs.Add("Finanzamt"); if (_bhKK) bhs.Add("Krankenkasse");
+        if (_bhRente) bhs.Add("Rentenversicherung"); if (_bhStadt) bhs.Add("Stadtverwaltung");
+        if (_bhGericht) bhs.Add("Gericht/Notar"); if (_bhIHK) bhs.Add("Handwerkskammer/IHK");
+        if (bhs.Any()) sb.AppendLine($"BEHÖRDEN: {string.Join(", ", bhs)}");
+        if (!string.IsNullOrWhiteSpace(_bhDienstleister))
+            sb.AppendLine($"DIENSTLEISTER: {_bhDienstleister}");
+
+        sb.AppendLine();
+        if (_archiveExtraInfo.Any())
+        {
+            sb.AppendLine("WEITERE PERSÖNLICHE DATEN:");
+            foreach (var kv in _archiveExtraInfo)
+                sb.AppendLine($"- {kv.Key}: {kv.Value}");
+            sb.AppendLine();
+        }
+        sb.AppendLine($"TITEL-FORMAT: {string.Join(_titelTrennzeichen, _titelBausteine.Select(b => $"[{b}]"))}");
+        sb.AppendLine($"Beispiel: {string.Join(_titelTrennzeichen, _titelBausteine.Select(TitelBeispiel))}");
+        sb.AppendLine();
+        sb.AppendLine("Tags: [tags]");
+        sb.AppendLine("Dokumenttypen: [document_types]");
+        _generatedPrompt = sb.ToString().Trim();
+    }
+
+    private async Task SaveGeneratedPrompt()
+    {
+        _settings.CustomSystemPrompt = _generatedPrompt;
+        await Save();
+        _promptSaved = true;
+    }
+
+
+    // Beruf-Variablen (nicht mehr im UI, aber für BuildPrompt-Kompatibilität)
+
+    // Schritt 5: Verträge
+    private bool _vtStrom = true, _vtInternet = true, _vtVers = true, _vtKV = true;
+    private bool _vtMiete = true, _vtLeasing, _vtAlters, _vtWartung;
+
+    // Schritt 6: Behörden
+    private bool _bhFinanz = true, _bhKK = true, _bhRente, _bhStadt = true, _bhGericht, _bhIHK;
+    private string _bhDienstleister = "";
+
+    private List<CorrespondentMergeSuggestion> _mergeSuggestions = new();
+    private HashSet<int> _mergingIdx = new();
+    private Dictionary<int, MergeResult> _mergeResults = new();
+
+    private bool _resetting, _fullResetting, _deletingTags, _deletingDocTypes, _deletingCorrespondents;
+    private IndexResetResult? _resetResult;
+    private FullResetResult? _fullResetResult;
+    private DeleteAllResult? _deleteTagsResult, _deleteDocTypesResult, _deleteCorrespondentsResult;
+
+    // ConfirmDialog-Refs für Löschaktionen
+    private ConfirmDialog? _confirmTags, _confirmDocTypes, _confirmCorrespondents, _confirmFullReset, _confirmResetIndex;
+
+    private string WebhookUrl => Nav.BaseUri.TrimEnd('/') + "/api/webhook/paperless";
+
+    private async Task Retry()
+    {
+        _loading = true; _loadError = null; StateHasChanged();
+        await OnInitializedAsync();
+    }
+
+    protected override void OnInitialized()
+    {
+        SettingsTabState.OnChanged += async () =>
+        {
+            if (SettingsTabState.ActiveTab == "Prompt-Assistent")
+            {
+                LoadCfNames();
+                _archiveImportChecked = false; // erlaubt erneuten Import-Check
+                await ApplyArchiveImportAsync();
+            }
+            await InvokeAsync(StateHasChanged);
+        };
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _settings = await Api.GetSettingsAsync();
+            try { var s = await Api.GetStatusAsync(); _proMode = s.ProMode; } catch { }
+
+            // Community-Modus: Vokabular immer auf Demo-Defaults zurücksetzen
+            if (!_proMode)
+            {
+                _settings.DefaultTagVocabulary = "Rechnung, Vertrag, Privat, Arbeit, Sonstiges";
+                _settings.DefaultDocumentTypeVocabulary = "Rechnung, Vertrag, Anschreiben, Bescheid, Sonstiges";
+            }
+        }
+        catch (Exception ex)
+        {
+            _loadError = $"Einstellungen konnten nicht geladen werden: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+            _ = Task.Run(async () => {
+                try { await LoadCustomFields(); } catch { }
+                try { await LoadCfNamesAsync(); } catch { }
+                await InvokeAsync(StateHasChanged);
+            });
+        }
+    }
+
+    private async Task CreateMissingFieldsAsync()
+    {
+        _creatingMissingFields = true; _setupMessage = ""; StateHasChanged();
+        var requiredFields = new[] {
+            ("Steuer","boolean"),("Mietobjekt","boolean"),("Rechnungsbetrag","monetary"),
+            ("Rechnungsnummer","string"),("Belegnummer","string"),("Seriennummer","string"),
+            ("Fahrzeug","string"),("Vertragsnummer","string"),("Vertragsende","date"),
+            ("Fälligkeitsdatum","date"),("Gewerk_Dienstleistung","string"),
+            ("Objekt / Adresse","string"),("Familienmitglied","string")
+        };
+        int created = 0;
+        foreach (var (name, type) in requiredFields)
+        {
+            if (!_cfNames.Any(n => string.Equals(n, name, StringComparison.OrdinalIgnoreCase)))
+            {
+                var (ok, _) = await Api.CreateCustomFieldAsync(name, type);
+                if (ok) created++;
+            }
+        }
+        await LoadCfNamesAsync();
+        _setupMessage = created > 0 ? $"{created} Felder angelegt." : "Alle Felder bereits vorhanden.";
+        _creatingMissingFields = false;
+    }
+
+    private async Task LoadCfNamesAsync()
+    {
+        // 1. Zuerst aus Paperless-API laden (direkt, unabhängig von lokaler Einstellungsliste)
+        try
+        {
+            var fields = await Api.GetCustomFieldsAsync();
+            if (fields?.Count > 0)
+            {
+                _cfNames = fields.Select(f => f.Name).ToList();
+                return;
+            }
+        }
+        catch { }
+        // 2. Fallback: lokale Einstellungsliste
+        _cfNames = (_settings.EnabledCustomFieldNames ?? "")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToList();
+    }
+    private void LoadCfNames() => _ = LoadCfNamesAsync();
+
+    private string _activeProvider = "gemini";
+
+    public record ProviderDef(string Key, string Label, string Icon, string ApiBase, string DefaultModel, string Provider);
+    private static readonly ProviderDef[] _providers = new ProviderDef[]
+    {
+        new ProviderDef("gemini",     "Google Gemini",  """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;" aria-hidden="true"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>""",
+              "https://generativelanguage.googleapis.com/v1beta/openai/", "gemini-2.5-flash", "custom"),
+        new ProviderDef("openai",     "OpenAI",         """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>""",
+              "https://api.openai.com/v1", "gpt-4o-mini", "openai"),
+        new ProviderDef("deepseek",   "DeepSeek",       """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>""",
+              "https://api.deepseek.com/v1", "deepseek-chat", "custom"),
+        new ProviderDef("openrouter", "OpenRouter",     """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;" aria-hidden="true"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>""",
+              "https://openrouter.ai/api/v1", "openai/gpt-4o-mini", "custom"),
+        new ProviderDef("perplexity", "Perplexity",     """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>""",
+              "https://api.perplexity.ai", "llama-3.1-sonar-small-128k-online", "custom"),
+        new ProviderDef("together",   "Together.ai",    """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>""",
+              "https://api.together.xyz/v1", "meta-llama/Llama-3-8b-chat-hf", "custom"),
+        new ProviderDef("litellm",    "LiteLLM",        """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>""",
+              "http://localhost:4000/v1", "gpt-3.5-turbo", "custom"),
+        new ProviderDef("vllm",       "vLLM",           """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>""",
+              "http://localhost:8000/v1", "mistralai/Mistral-7B-Instruct-v0.1", "custom"),
+        new ProviderDef("fastchat",   "Fastchat",       """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>""",
+              "http://localhost:21001/v1", "vicuna-7b-v1.5", "custom"),
+        new ProviderDef("ollama",     "Ollama",         """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;" aria-hidden="true"><path d="M8 3c0 0-2 2-2 6s2 7 2 7H6l-2 5h4l1-3h6l1 3h4l-2-5h-2s2-3 2-7-2-6-2-6"/></svg>""",
+              "http://localhost:11434/v1", "llama3.1", "ollama"),
+    };
+
+    private void ApplyPreset(string p)
+    {
+        var preset = _providers.FirstOrDefault(x => x.Key == p);
+        if (preset is null) return;
+        _activeProvider = p;
+        _settings.LlmProvider = preset.Provider;
+        _settings.LlmModel = preset.DefaultModel;
+        _settings.LlmApiBase = preset.ApiBase;
+    }
+
+    private System.Threading.CancellationTokenSource? _autoSaveCts;
+
+    private Task AutoSaveAsync()
+    {
+        _autoSaveCts?.Cancel();
+        _autoSaveCts = new System.Threading.CancellationTokenSource();
+        var token = _autoSaveCts.Token;
+        SettingsTabState.SetSaveStatus("saving");
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(1200, token);
+                if (!token.IsCancellationRequested)
+                {
+                    await InvokeAsync(async () =>
+                    {
+                        await Save();
+                        SettingsTabState.SetSaveStatus("saved");
+                        StateHasChanged();
+                        await Task.Delay(2000);
+                        SettingsTabState.SetSaveStatus(null);
+                        StateHasChanged();
+                    });
+                }
+            }
+            catch (TaskCanceledException)
+            {
+                await InvokeAsync(() => { SettingsTabState.SetSaveStatus(null); StateHasChanged(); });
+            }
+        });
+        return Task.CompletedTask;
+    }
+
+    private static string TitelBeispiel(string b) => b switch
+    {
+        "Korrespondent" => "Musterfirma",
+        "Dokumenttyp" => "Rechnung",
+        "Datum" => "2025-03",
+        "Betrag" => "149,90 €",
+        "Rechnungsnummer" => "RE-2025-001",
+        "Belegnummer" => "BEL-001",
+        "Beschreibung" => "Wartungsvertrag",
+        "Fahrzeug" => "VW Golf",
+        "Kennzeichen" => "MS-AB-123",
+        _ => b
+    };
+
+    private bool _archiveImportChecked = false;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && SettingsTabState.ActiveTab == "Prompt-Assistent")
+        {
+            await ApplyArchiveImportAsync();
+        }
+    }
+
+    private async Task ApplyArchiveImportAsync()
+    {
+        if (_archiveImportChecked) return;
+        _archiveImportChecked = true;
+        try
+        {
+            var json = await JS.InvokeAsync<string?>("sessionStorage.getItem", "archiveAnalysisImport");
+            if (string.IsNullOrWhiteSpace(json)) return;
+
+            var fields = System.Text.Json.JsonSerializer.Deserialize<List<ArchiveField>>(json,
+                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            if (fields is null || !fields.Any()) return;
+
+            // Initialliste leeren wenn nur Leereinträge drin
+            if (_assistPersons.All(p => string.IsNullOrWhiteSpace(p.Name)))
+                _assistPersons.Clear();
+            if (_assistAddresses.All(a => string.IsNullOrWhiteSpace(a.Adresse)))
+                _assistAddresses.Clear();
+            if (_assistArbeitgeber.All(a => string.IsNullOrWhiteSpace(a.Firma)))
+                _assistArbeitgeber.Clear();
+
+            foreach (var f in fields)
+            {
+                switch (f.Key)
+                {
+                    case "name":
+                        if (!string.IsNullOrWhiteSpace(f.Value) && _assistPersons.All(p => p.Name != f.Value))
+                            _assistPersons.Add(new AssistPerson(f.Value, "Hauptnutzer"));
+                        break;
+                    case "adresse":
+                        if (!string.IsNullOrWhiteSpace(f.Value) && _assistAddresses.All(a => a.Adresse != f.Value))
+                            _assistAddresses.Add(new AssistAddress("Adresse", f.Value, false));
+                        break;
+                    case "firma":
+                        if (!string.IsNullOrWhiteSpace(f.Value) && _assistArbeitgeber.All(a => a.Firma != f.Value))
+                            _assistArbeitgeber.Add(new AssistArbeitgeber(f.Value));
+                        break;
+                    case "modell":
+                        if (!string.IsNullOrWhiteSpace(f.Value) && _assistVehicles.All(v => v.Modell != f.Value))
+                            _assistVehicles.Add(new AssistVehicle(f.Value, "", false));
+                        break;
+                    case "kennzeichen":
+                        if (!string.IsNullOrWhiteSpace(f.Value))
+                        {
+                            var noKz = _assistVehicles.FindIndex(v => string.IsNullOrWhiteSpace(v.Kennzeichen));
+                            if (noKz >= 0) _assistVehicles[noKz] = _assistVehicles[noKz] with { Kennzeichen = f.Value };
+                            else _assistVehicles.Add(new AssistVehicle("", f.Value, false));
+                        }
+                        break;
+                    case "steuernummer": _archiveExtraInfo.TryAdd("Steuernummer", f.Value); break;
+                    case "steuer_id":    _archiveExtraInfo.TryAdd("Steuer-ID", f.Value); break;
+                    case "rentenversicherungsnr": _archiveExtraInfo.TryAdd("Rentenversicherungsnr.", f.Value); break;
+                    case "iban":         _archiveExtraInfo.TryAdd($"IBAN", f.Value); break;
+                    case "krankenversicherung": _archiveExtraInfo.TryAdd("Krankenversicherung", f.Value); break;
+                    case "finanzamt":    _archiveExtraInfo.TryAdd("Finanzamt", f.Value); break;
+                }
+            }
+
+            await JS.InvokeVoidAsync("sessionStorage.removeItem", "archiveAnalysisImport");
+            _archiveImportDone = true;
+            await InvokeAsync(StateHasChanged);
+        }
+        catch { }
+    }
+
+    private Dictionary<string, string> _archiveExtraInfo = new();
+    private bool _archiveImportDone = false;
+
+    private async Task ResetMonthlyTokens()
+    {
+        _settings.MonthlyTokenUsed = 0;
+        await Save();
+    }
+
+    private async Task Save()
+    {
+        _saving = true; _savedMessage = null; StateHasChanged();
+        // Community-Modus: Vokabular immer auf Defaults zurücksetzen, egal was im UI steht
+        if (!_proMode)
+        {
+            _settings.DefaultTagVocabulary = "Rechnung, Vertrag, Privat, Arbeit, Sonstiges";
+            _settings.DefaultDocumentTypeVocabulary = "Rechnung, Vertrag, Anschreiben, Bescheid, Sonstiges";
+        }
+        await Api.SaveSettingsAsync(_settings);
+        _savedMessage = "Gespeichert ✓"; _saving = false;
+        await Task.Delay(2500); _savedMessage = null;
+    }
+
+    private async Task TestPaperless() { _testingPaperless = true; _paperlessTestResult = await Api.TestPaperlessAsync(_settings); _testingPaperless = false; }
+    private async Task TestLlm() { _testingLlm = true; _llmTestResult = await Api.TestLlmAsync(_settings); _testingLlm = false; }
+
+    private async Task ImportTagsFromPaperless()
+    {
+        if (!_proMode) return; // Community: kein Import erlaubt
+        _importingTagsFromPaperless = true; StateHasChanged();
+        var result = await Api.ImportTagsFromPaperlessAsync();
+        if (result.Success && !string.IsNullOrEmpty(result.SuggestedVocabulary))
+        {
+            _settings.DefaultTagVocabulary = result.SuggestedVocabulary;
+            _suggestTagsResult = new SuggestVocabularyResult { Success = true, Message = $"✓ {result.DocumentsAnalyzed} Tags aus Paperless importiert", SuggestedVocabulary = result.SuggestedVocabulary };
+        }
+        else { _suggestTagsResult = new SuggestVocabularyResult { Success = false, Message = result.Message ?? "Fehler beim Import" }; }
+        _importingTagsFromPaperless = false;
+    }
+    private async Task ImportDocTypesFromPaperless()
+    {
+        if (!_proMode) return; // Community: kein Import erlaubt
+        _importingDocTypesFromPaperless = true; StateHasChanged();
+        var result = await Api.ImportDocTypesFromPaperlessAsync();
+        if (result.Success && !string.IsNullOrEmpty(result.SuggestedVocabulary))
+        {
+            _settings.DefaultDocumentTypeVocabulary = result.SuggestedVocabulary;
+            _suggestDocTypesResult = new SuggestVocabularyResult { Success = true, Message = $"✓ {result.DocumentsAnalyzed} Dokumenttypen aus Paperless importiert", SuggestedVocabulary = result.SuggestedVocabulary };
+        }
+        else { _suggestDocTypesResult = new SuggestVocabularyResult { Success = false, Message = result.Message ?? "Fehler beim Import" }; }
+        _importingDocTypesFromPaperless = false;
+    }
+
+    private async Task SuggestTags()
+    {
+        if (!_proMode) return; // Community: kein KI-Vorschlag erlaubt
+        _suggestingTags = true; _suggestTagsResult = await Api.SuggestTagsAsync();
+        if (_suggestTagsResult?.Success == true && !string.IsNullOrEmpty(_suggestTagsResult.SuggestedVocabulary)) _settings.DefaultTagVocabulary = _suggestTagsResult.SuggestedVocabulary;
+        _suggestingTags = false;
+    }
+
+    private async Task SuggestDocumentTypes()
+    {
+        if (!_proMode) return; // Community: kein KI-Vorschlag erlaubt
+        _suggestingDocTypes = true; _suggestDocTypesResult = await Api.SuggestDocumentTypesAsync();
+        if (_suggestDocTypesResult?.Success == true && !string.IsNullOrEmpty(_suggestDocTypesResult.SuggestedVocabulary)) _settings.DefaultDocumentTypeVocabulary = _suggestDocTypesResult.SuggestedVocabulary;
+        _suggestingDocTypes = false;
+    }
+
+    private async Task SeedTags() { _seedingTags = true; _seedTagsResult = await Api.SeedTagsAsync(); _seedingTags = false; }
+    private async Task SeedDocumentTypes() { _seedingDocTypes = true; _seedDocTypesResult = await Api.SeedDocumentTypesAsync(); _seedingDocTypes = false; }
+
+    private void ClearPersonalData() { _settings.CustomSystemPrompt = null; _promptContainsPersonalData = false; }
+
+    private async Task ExportConfig()
+    {
+        var e = new { _settings.ProcessedTagName, _settings.PollIntervalSeconds, _settings.AutoModeEnabled, _settings.EnableTagsAssignment, _settings.EnableCorrespondentDetection, _settings.EnableDocumentTypeClassification, _settings.EnableTitleGeneration, _settings.UseExistingCorrespondentsOnly, _settings.UseExistingDocumentTypesOnly, _settings.UseExistingTagsOnly, _settings.EnableCustomFields, _settings.DefaultTagVocabulary, _settings.DefaultDocumentTypeVocabulary, _settings.EnabledCustomFieldNames, _settings.CustomSystemPrompt, _settings.LlmTemperature, _settings.LlmMaxTokens, _settings.LlmProvider, _settings.LlmModel, _settings.LlmApiBase, exportedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm") };
+        var json = System.Text.Json.JsonSerializer.Serialize(e, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        await JS.InvokeVoidAsync("downloadFile", "paperleo-config.json", "application/json", Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(json)));
+    }
+
+    private async Task ImportConfig(Microsoft.AspNetCore.Components.ChangeEventArgs ev)
+    {
+        _importMessage = null;
+        try
+        {
+            if (ev.Value is not Microsoft.AspNetCore.Components.Forms.IBrowserFile f) return;
+            using var stream = f.OpenReadStream(512 * 1024);
+            using var reader = new System.IO.StreamReader(stream);
+            using var doc = System.Text.Json.JsonDocument.Parse(await reader.ReadToEndAsync());
+            var r = doc.RootElement;
+            void S(string p, Action<string?> a) { if (r.TryGetProperty(p, out var v)) a(v.ValueKind == System.Text.Json.JsonValueKind.String ? v.GetString() : null); }
+            void B(string p, Action<bool> a) { if (r.TryGetProperty(p, out var v) && v.ValueKind is System.Text.Json.JsonValueKind.True or System.Text.Json.JsonValueKind.False) a(v.GetBoolean()); }
+            void I(string p, Action<int> a) { if (r.TryGetProperty(p, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.Number) a(v.GetInt32()); }
+            S("processedTagName", v => _settings.ProcessedTagName = v ?? _settings.ProcessedTagName);
+            S("defaultTagVocabulary", v => _settings.DefaultTagVocabulary = v);
+            S("defaultDocumentTypeVocabulary", v => _settings.DefaultDocumentTypeVocabulary = v);
+            S("customSystemPrompt", v => _settings.CustomSystemPrompt = v);
+            S("enabledCustomFieldNames", v => _settings.EnabledCustomFieldNames = v);
+            S("llmProvider", v => _settings.LlmProvider = v ?? _settings.LlmProvider);
+            S("llmModel", v => _settings.LlmModel = v ?? _settings.LlmModel);
+            S("llmApiBase", v => _settings.LlmApiBase = v);
+            B("autoModeEnabled", v => _settings.AutoModeEnabled = v);
+            B("enableTagsAssignment", v => _settings.EnableTagsAssignment = v);
+            B("enableCorrespondentDetection", v => _settings.EnableCorrespondentDetection = v);
+            B("enableDocumentTypeClassification", v => _settings.EnableDocumentTypeClassification = v);
+            B("enableTitleGeneration", v => _settings.EnableTitleGeneration = v);
+            B("enableCustomFields", v => _settings.EnableCustomFields = v);
+            B("useExistingCorrespondentsOnly", v => _settings.UseExistingCorrespondentsOnly = v);
+            B("useExistingDocumentTypesOnly", v => _settings.UseExistingDocumentTypesOnly = v);
+            B("useExistingTagsOnly", v => _settings.UseExistingTagsOnly = v);
+            I("pollIntervalSeconds", v => _settings.PollIntervalSeconds = v);
+            I("llmMaxTokens", v => _settings.LlmMaxTokens = v);
+            if (r.TryGetProperty("llmTemperature", out var t)) _settings.LlmTemperature = t.GetDouble();
+            _importMessage = "Importiert – bitte speichern.";
+        }
+        catch (Exception ex) { _importMessage = $"❌ {ex.Message}"; }
+    }
+
+    private void ToggleCustomField(string n, bool on)
+    {
+        var set = (_settings.EnabledCustomFieldNames ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (set.Count == 0) set = _customFields.Select(f => f.Name).Where(x => !string.Equals(x, n, StringComparison.OrdinalIgnoreCase)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        else if (on) set.Add(n); else set.Remove(n);
+        _settings.EnabledCustomFieldNames = set.Count == _customFields.Count ? "" : string.Join(", ", set);
+    }
+
+    private async Task LoadCustomFields() { _loadingFields = true; StateHasChanged(); _customFields = await Api.GetCustomFieldsAsync(); _loadingFields = false; }
+
+    private async Task CreateCustomField()
+    {
+        if (string.IsNullOrWhiteSpace(_newFieldName)) return;
+        _creatingField = true; _createFieldMessage = null; StateHasChanged();
+        var (ok, msg) = await Api.CreateCustomFieldAsync(_newFieldName.Trim(), _newFieldType);
+        _createFieldMessage = ok ? $"\"{_newFieldName}\" angelegt." : $"❌ {msg}";
+        if (ok) { _newFieldName = ""; await LoadCustomFields(); }
+        _creatingField = false;
+    }
+
+    private async Task StartBackfill()
+    {
+        await Api.BackfillCustomFieldsAsync();
+        _backfillProgress = new BackfillProgress { IsRunning = true };
+        StateHasChanged();
+        // Polling alle 1.5s
+        _backfillTimer?.Dispose();
+        _backfillTimer = new System.Threading.Timer(async _ =>
+        {
+            var progress = await Api.GetBackfillProgressAsync();
+            if (progress is not null) _backfillProgress = progress;
+            await InvokeAsync(StateHasChanged);
+            if (progress?.IsRunning == false) { _backfillTimer?.Dispose(); _backfillTimer = null; }
+        }, null, 1500, 1500);
+    }
+
+    private Task SuggestMerges() => Task.CompletedTask; // deaktiviert
+    private async Task ConfirmMerge(int idx, CorrespondentMergeSuggestion s) { _mergingIdx.Add(idx); StateHasChanged(); _mergeResults[idx] = await Api.MergeCorrespondentsAsync(s.PrimaryName, s.Aliases); _mergingIdx.Remove(idx); }
+    private void DismissMerge(int idx) { if (idx < _mergeSuggestions.Count) _mergeSuggestions.RemoveAt(idx); }
+    private void DismissAllMerges() { _mergeSuggestions.Clear(); _mergeResults.Clear(); }
+
+    private async Task DeleteAllTags() { _deletingTags = true; _deleteTagsResult = await Api.DeleteAllTagsAsync(); _deletingTags = false; }
+    private async Task DeleteAllDocumentTypes() { _deletingDocTypes = true; _deleteDocTypesResult = await Api.DeleteAllDocumentTypesAsync(); _deletingDocTypes = false; }
+    private async Task DeleteAllCorrespondents() { _deletingCorrespondents = true; _deleteCorrespondentsResult = await Api.DeleteAllCorrespondentsAsync(); _deletingCorrespondents = false; }
+    private async Task FullReset() { _fullResetting = true; _fullResetResult = await Api.FullResetAsync(); _fullResetting = false; }
+    private async Task ResetIndex() { _resetting = true; _resetResult = await Api.ResetIndexAsync(); _resetting = false; }
+
+    // Callbacks vom ConfirmDialog
+    private async Task DeleteAllTagsConfirmed() => await DeleteAllTags();
+    private async Task DeleteAllDocTypesConfirmed() => await DeleteAllDocumentTypes();
+    private async Task DeleteAllCorrespondentsConfirmed() => await DeleteAllCorrespondents();
+    private async Task FullResetConfirmed() => await FullReset();
+    private async Task ResetIndexConfirmed() => await ResetIndex();
+}
