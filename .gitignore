@@ -1,0 +1,12 @@
+bin/
+obj/
+.vs/
+.vscode/
+*.user
+*.suo
+.DS_Store
+Thumbs.db
+
+# Data dir: ignore contents but keep folder
+data/*
+!data/.gitkeep

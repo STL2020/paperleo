@@ -1,0 +1,396 @@
+@using PaperlessAiCore.Shared
+@page "/correspondents"
+@inject ApiClient Api
+@inject AppLocService Loc
+@inject IJSRuntime JS
+
+<style>
+    .corr-card {
+        background: var(--c-surface);
+        border: 0.5px solid var(--c-border);
+        border-radius: 12px;
+        padding: 14px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        cursor: pointer;
+        transition: border-color .15s, transform .15s, box-shadow .15s;
+    }
+    .corr-card:hover {
+        border-color: var(--c-accent);
+        transform: translateY(-2px);
+        box-shadow: 0 4px 16px rgba(29,158,117,.12);
+    }
+    .corr-card.selected {
+        border-color: var(--c-accent);
+        background: rgba(29,158,117,.06);
+    }
+    .corr-logo {
+        width: 48px; height: 48px;
+        border-radius: 10px;
+        overflow: hidden;
+        background: rgba(255,255,255,.04);
+        display: flex; align-items: center; justify-content: center;
+    }
+    .corr-monogram {
+        width: 48px; height: 48px;
+        border-radius: 10px;
+        background: linear-gradient(135deg, rgba(29,158,117,.25), rgba(48,143,209,.15));
+        display: flex; align-items: center; justify-content: center;
+        font-size: 20px; font-weight: 700; color: var(--c-accent);
+    }
+    .doc-row {
+        display: grid;
+        grid-template-columns: 1fr auto auto;
+        gap: 8px;
+        align-items: center;
+        padding: 8px 10px;
+        border-radius: 8px;
+        font-size: 12px;
+        border-bottom: 0.5px solid rgba(255,255,255,.04);
+        transition: background .1s;
+    }
+    .doc-row:hover { background: rgba(255,255,255,.03); }
+    .doc-row:last-child { border-bottom: none; }
+    .tab-btn {
+        padding: 3px 9px;
+        font-size: 11px;
+        border-radius: 6px;
+        border: 1px solid var(--c-border);
+        background: rgba(255,255,255,.04);
+        color: var(--c-muted);
+        cursor: pointer;
+        transition: all .15s;
+    }
+    .tab-btn.active {
+        border-color: var(--c-accent);
+        background: rgba(29,158,117,.12);
+        color: var(--c-accent);
+    }
+</style>
+
+<div style="max-width:1200px;padding:20px 24px;">
+
+    <!-- Header -->
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:18px;">
+        <div>
+            <h1 style="font-size:20px;font-weight:700;color:var(--c-text);margin:0 0 2px;">Korrespondenten</h1>
+            <p style="font-size:11px;color:var(--c-muted);margin:0;">@_all.Count Korrespondenten @(string.IsNullOrEmpty(_logoKitToken)?"":"· Logos via LogoKit")</p>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+            <!-- Debounced search -->
+            <div style="position:relative;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                     style="width:13px;height:13px;position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--c-muted);pointer-events:none;">
+                    <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                </svg>
+                <input value="@_searchInput"
+                       @oninput="OnSearchInput"
+                       placeholder="Suchen…"
+                       style="background:var(--c-surface);border:1px solid var(--c-border);border-radius:8px;padding:7px 12px 7px 28px;font-size:12px;color:var(--c-text);outline:none;width:180px;" />
+            </div>
+            <!-- Sort -->
+            <select @bind="_sortMode" style="background:var(--c-surface);border:1px solid var(--c-border);border-radius:8px;padding:6px 10px;font-size:12px;color:var(--c-text);cursor:pointer;">
+                <option value="name">A–Z</option>
+                <option value="docs">Meiste Dokumente</option>
+            </select>
+            <button class="btn secondary" @onclick="Reload" style="padding:6px 12px;font-size:12px;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+            </button>
+        </div>
+    </div>
+
+    @if (_loading)
+    {
+        <div class="pl-progress-wrap">
+            <div class="pl-progress-spinner"></div>
+            <p class="pl-progress-title">Korrespondenten werden geladen…</p>
+            <div class="pl-progress-track"><div class="pl-progress-fill-indeterminate"></div></div>
+        </div>
+    }
+    else
+    {
+        <!-- A–Z Filter Row -->
+        <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:14px;">
+            <button class="tab-btn @(_letterFilter=="ALL"?"active":"")" @onclick='()=>_letterFilter="ALL"'>
+                Alle (@Filtered.Count)
+            </button>
+            @foreach (var l in ActiveLetters)
+            {
+                var letter = l;
+                var cnt = Filtered.Count(x => char.ToUpper(x.Name.FirstOrDefault()) == letter);
+                <button class="tab-btn @(_letterFilter==letter.ToString()?"active":"")"
+                        @onclick='()=>_letterFilter=letter.ToString()'>
+                    @letter (@cnt)
+                </button>
+            }
+        </div>
+
+        @if (_selected is null)
+        {
+            <!-- GRID VIEW -->
+            @foreach (var grp in GroupedFiltered)
+            {
+                <div style="display:flex;align-items:center;gap:10px;margin:16px 0 8px;">
+                    <div style="width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,rgba(29,158,117,.25),rgba(48,143,209,.15));display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800;color:var(--c-accent);">@grp.Key</div>
+                    <div style="flex:1;height:0.5px;background:var(--c-border);"></div>
+                    <span style="font-size:10px;color:var(--c-muted);">@grp.Value.Count</span>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-bottom:4px;">
+                    @foreach (var cor in grp.Value)
+                    {
+                        var c = cor;
+                        var domain = GuessDomain(c.Name);
+                        <div class="corr-card" @onclick="() => SelectCorrespondent(c)">
+                            @if (!string.IsNullOrEmpty(_logoKitToken) && !string.IsNullOrEmpty(domain))
+                            {
+                                <div class="corr-logo">
+                                    <img src="https://img.logokit.com/@(domain)?token=@_logoKitToken"
+                                         alt="@c.Name" width="40" height="40"
+                                         style="object-fit:contain;"
+                                         onerror="this.parentElement.innerHTML='<div style=\'width:48px;height:48px;border-radius:10px;background:linear-gradient(135deg,rgba(29,158,117,.25),rgba(48,143,209,.15));display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;color:var(--c-accent);\'>@(c.Name.Length > 0 ? char.ToUpper(c.Name[0]).ToString() : "?")</div>'" />
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="corr-monogram">@(c.Name.Length > 0 ? char.ToUpper(c.Name[0]).ToString() : "?")</div>
+                            }
+                            <div style="text-align:center;width:100%;">
+                                <p style="font-size:11px;font-weight:600;color:var(--c-text);margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="@c.Name">@c.Name</p>
+                                @if (c.DocumentCount > 0)
+                                {
+                                    <p style="font-size:10px;color:var(--c-muted);margin:2px 0 0;">@c.DocumentCount Dok.</p>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+
+            @if (!GroupedFiltered.Any())
+            {
+                <div style="text-align:center;padding:48px;color:var(--c-muted);">
+                    <p style="font-size:14px;">Keine Ergebnisse für „@_searchQuery"</p>
+                </div>
+            }
+        }
+        else
+        {
+            <!-- DETAIL VIEW -->
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+                <button class="btn secondary" @onclick="() => { _selected = null; _docs.Clear(); }" style="padding:5px 12px;font-size:12px;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;"><polyline points="15 18 9 12 15 6"/></svg>
+                    Zurück
+                </button>
+                @{ var selDomain = GuessDomain(_selected.Name); }
+                @if (!string.IsNullOrEmpty(_logoKitToken) && !string.IsNullOrEmpty(selDomain))
+                {
+                    <img src="https://img.logokit.com/@(selDomain)?token=@_logoKitToken"
+                         width="32" height="32" style="border-radius:8px;object-fit:contain;background:rgba(255,255,255,.04);padding:2px;"
+                         onerror="this.style.display='none'" />
+                }
+                else
+                {
+                    <div style="width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,rgba(29,158,117,.25),rgba(48,143,209,.15));display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;color:var(--c-accent);">
+                        @(char.ToUpper(_selected.Name[0]))
+                    </div>
+                }
+                <div>
+                    <h2 style="font-size:16px;font-weight:700;color:var(--c-text);margin:0;">@_selected.Name</h2>
+                    <p style="font-size:11px;color:var(--c-muted);margin:0;">@_selected.DocumentCount Dokument@(_selected.DocumentCount==1?"":"e")</p>
+                </div>
+            </div>
+
+            @if (_docsLoading)
+            {
+                <div class="pl-progress-wrap" style="padding:16px;">
+                    <div class="pl-progress-spinner" style="width:24px;height:24px;border-width:2px;"></div>
+                    <p class="pl-progress-phase">Dokumente werden geladen…</p>
+                    <div class="pl-progress-track"><div class="pl-progress-fill-indeterminate"></div></div>
+                </div>
+            }
+            else if (_docs.Any())
+            {
+                <!-- Doc sort + type filter -->
+                <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center;">
+                    <span style="font-size:11px;color:var(--c-muted);">Sortieren:</span>
+                    <button class="tab-btn @(_docSort=="date"?"active":"")" @onclick='()=>_docSort="date"'>Datum ↓</button>
+                    <button class="tab-btn @(_docSort=="title"?"active":"")" @onclick='()=>_docSort="title"'>Titel A–Z</button>
+                    <button class="tab-btn @(_docSort=="type"?"active":"")" @onclick='()=>_docSort="type"'>Typ</button>
+                    @if (DocTypes.Count > 0)
+                    {
+                        <span style="margin-left:8px;font-size:11px;color:var(--c-muted);">Typ:</span>
+                        <button class="tab-btn @(_typeFilter==null?"active":"")" @onclick="()=>_typeFilter=null">Alle</button>
+                        @foreach (var t in DocTypes)
+                        {
+                            var type = t;
+                            <button class="tab-btn @(_typeFilter==type?"active":"")" @onclick="()=>_typeFilter=type">@type</button>
+                        }
+                    }
+                    <span style="margin-left:auto;font-size:11px;color:var(--c-muted);">@SortedDocs.Count Dokumente</span>
+                </div>
+
+                <div style="background:var(--c-surface);border:0.5px solid var(--c-border);border-radius:12px;overflow:hidden;">
+                    @foreach (var doc in SortedDocs)
+                    {
+                        var docId = doc.Id;
+                        <div class="doc-row">
+                            <div style="overflow:hidden;">
+                                <p style="margin:0;font-size:12px;color:var(--c-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="@doc.Title">@doc.Title</p>
+                                @if (doc.DocumentType is not null)
+                                {
+                                    <span style="font-size:10px;color:var(--c-accent);background:rgba(29,158,117,.1);padding:1px 6px;border-radius:4px;">@doc.DocumentType</span>
+                                }
+                            </div>
+                            <span style="font-size:11px;color:var(--c-muted);white-space:nowrap;">@FormatDate(doc.Created)</span>
+                            <a href="@($"/documents/{docId}")" style="color:var(--c-muted);padding:3px 6px;border-radius:6px;border:0.5px solid var(--c-border);font-size:10px;text-decoration:none;white-space:nowrap;">
+                                Details →
+                            </a>
+                        </div>
+                    }
+                </div>
+            }
+            else
+            {
+                <div style="text-align:center;padding:32px;color:var(--c-muted);font-size:13px;">Keine Dokumente gefunden.</div>
+            }
+        }
+
+        @if (!string.IsNullOrEmpty(_logoKitToken) && _selected is null)
+        {
+            <div style="text-align:center;margin-top:20px;padding-top:12px;border-top:0.5px solid rgba(255,255,255,.05);">
+                <a href="https://logokit.com" target="_blank" rel="noopener" style="font-size:9px;color:var(--c-muted);text-decoration:none;opacity:.4;">Logos provided by LogoKit</a>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    private List<CorrespondentDto> _all = new();
+    private CorrespondentDto? _selected;
+    private List<CorrespondentDocDto> _docs = new();
+    private bool _loading = true;
+    private bool _docsLoading;
+    private string? _logoKitToken;
+
+    // Search: debounced
+    private string _searchInput = "";
+    private string _searchQuery = "";
+    private System.Threading.CancellationTokenSource? _searchCts;
+
+    private string _letterFilter = "ALL";
+    private string _sortMode = "name";
+    private string _docSort = "date";
+    private string? _typeFilter;
+
+    // Filtered + sorted correspondent list
+    private List<CorrespondentDto> Filtered =>
+        _all.Where(x => string.IsNullOrEmpty(_searchQuery) ||
+                        x.Name.Contains(_searchQuery, StringComparison.OrdinalIgnoreCase))
+            .Where(x => _letterFilter == "ALL" ||
+                        (x.Name.Length > 0 && char.ToUpper(x.Name[0]).ToString() == _letterFilter))
+            .OrderBy(x => _sortMode == "name" ? x.Name : "")
+            .ThenByDescending(x => _sortMode == "docs" ? x.DocumentCount : 0)
+            .ToList();
+
+    private IEnumerable<char> ActiveLetters =>
+        _all.Where(x => x.Name.Length > 0)
+            .Select(x => char.ToUpper(x.Name[0]))
+            .Distinct().OrderBy(x => x);
+
+    private Dictionary<char, List<CorrespondentDto>> GroupedFiltered =>
+        Filtered.GroupBy(x => x.Name.Length > 0 ? char.ToUpper(x.Name[0]) : '#')
+                .OrderBy(g => g.Key)
+                .ToDictionary(g => g.Key, g => g.ToList());
+
+    // Doc sorting + type filter
+    private List<string> DocTypes =>
+        _docs.Select(d => d.DocumentType).Where(t => t != null).Distinct().OrderBy(t => t).Select(t => t!).ToList();
+
+    private List<CorrespondentDocDto> SortedDocs =>
+        _docs.Where(d => _typeFilter == null || d.DocumentType == _typeFilter)
+             .OrderBy(d => _docSort == "title" ? d.Title : _docSort == "type" ? (d.DocumentType ?? "") : "")
+             .ThenByDescending(d => _docSort == "date" ? d.Created ?? "" : "")
+             .ToList();
+
+    // Debounced search: fires 400ms after last keystroke
+    private async Task OnSearchInput(ChangeEventArgs e)
+    {
+        _searchInput = e.Value?.ToString() ?? "";
+        _searchCts?.Cancel();
+        _searchCts = new System.Threading.CancellationTokenSource();
+        var token = _searchCts.Token;
+        try
+        {
+            await Task.Delay(400, token);
+            _searchQuery = _searchInput;
+            _letterFilter = "ALL";
+            StateHasChanged();
+        }
+        catch (TaskCanceledException) { }
+    }
+
+    private static string? GuessDomain(string name)
+    {
+        var known = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            {"amazon","amazon.de"},{"zalando","zalando.de"},{"otto","otto.de"},
+            {"ebay","ebay.de"},{"paypal","paypal.com"},{"google","google.com"},
+            {"microsoft","microsoft.com"},{"apple","apple.com"},{"telekom","telekom.de"},
+            {"dhl","dhl.de"},{"dpd","dpd.de"},{"hermes","hermesworld.com"},
+            {"sparkasse","sparkasse.de"},{"volksbank","volksbank.de"},{"postbank","postbank.de"},
+            {"aldi","aldi.de"},{"lidl","lidl.de"},{"rewe","rewe.de"},{"edeka","edeka.de"},
+            {"saturn","saturn.de"},{"mediamarkt","mediamarkt.de"},{"ikea","ikea.com"},
+            {"netflix","netflix.com"},{"spotify","spotify.com"},
+            {"vodafone","vodafone.de"},{"o2","o2online.de"},
+            {"db ","bahn.de"},{"bahn","bahn.de"},{"lufthansa","lufthansa.com"},
+            {"adac","adac.de"},{"decathlon","decathlon.de"},
+        };
+        var lower = name.ToLower().Trim();
+        foreach (var kv in known)
+            if (lower.Contains(kv.Key)) return kv.Value;
+        if (lower.Contains('.'))
+        {
+            var parts = lower.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            foreach (var p in parts)
+                if (p.Contains('.') && p.Length > 3) return p;
+        }
+        var slug = System.Text.RegularExpressions.Regex.Replace(lower, @"[^a-z0-9]", "");
+        return slug.Length > 2 ? slug + ".de" : null;
+    }
+
+    private static string FormatDate(string? iso)
+    {
+        if (string.IsNullOrEmpty(iso)) return "–";
+        if (DateTime.TryParse(iso, out var d)) return d.ToString("dd.MM.yyyy");
+        return iso[..Math.Min(10, iso.Length)];
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { var s = await Api.GetSettingsAsync(); _logoKitToken = s.LogoKitApiKey; } catch { }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender) await Reload();
+    }
+
+    private async Task Reload()
+    {
+        _loading = true; _selected = null; _docs.Clear(); StateHasChanged();
+        try { _all = await Api.GetCorrespondentsFullAsync(); }
+        catch { }
+        _loading = false; StateHasChanged();
+    }
+
+    private async Task SelectCorrespondent(CorrespondentDto cor)
+    {
+        _selected = cor; _docs.Clear(); _typeFilter = null; _docSort = "date";
+        _docsLoading = true; StateHasChanged();
+        try { _docs = await Api.GetCorrespondentDocsAsync(cor.Id); }
+        catch { }
+        _docsLoading = false; StateHasChanged();
+    }
+}

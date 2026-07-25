@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 60" width="280" height="60">
+  <defs>
+    <linearGradient id="plGradD" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#3fa86e"/>
+      <stop offset="100%" stop-color="#308fd1"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(10, 5)">
+    <path d="M 4,6 L 26,6 L 36,16 L 36,46 C 36,48 34,50 32,50 L 8,50 C 6,50 4,48 4,46 Z"
+          fill="none" stroke="url(#plGradD)" stroke-width="3" stroke-linejoin="round"/>
+    <path d="M 14,35 C 12,35 10,33 10,31 C 10,29 12,27 14,27 C 17,27 18,30 19,33 C 21,37 23,40 27,40 C 30,40 32,37 32,32 C 32,24 27,18 20,18"
+          fill="none" stroke="#308fd1" stroke-width="3" stroke-linecap="round"/>
+  </g>
+  <text x="62" y="41" font-family="-apple-system,system-ui,sans-serif" font-weight="400" font-size="32" fill="#e8f4f8" letter-spacing="-0.5">paper<tspan font-weight="800" fill="url(#plGradD)">Leo</tspan></text>
+</svg>

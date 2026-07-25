@@ -1,0 +1,51 @@
+@if (_show)
+{
+    <div class="confirm-overlay" @onclick="Cancel">
+        <div class="confirm-box" @onclick:stopPropagation="true">
+            <p class="confirm-title">⚠️ @Title</p>
+            <p class="confirm-text">@Text</p>
+            @if (!string.IsNullOrEmpty(TypeToConfirm))
+            {
+                <p style="font-size:12px;color:var(--muted);margin-bottom:6px;">
+                    Bitte tippe <strong style="color:var(--danger);">@TypeToConfirm</strong> zur Bestätigung:
+                </p>
+                <input @bind="_typed" @bind:event="oninput" placeholder="@TypeToConfirm"
+                       style="margin-bottom:14px;" />
+            }
+            <div class="confirm-actions">
+                <button class="btn secondary !py-1.5 !text-sm" @onclick="Cancel">Abbrechen</button>
+                <button class="btn !py-1.5 !text-sm"
+                        style="background:linear-gradient(135deg,#dc2626,#b91c1c);"
+                        disabled="@(!CanConfirm)"
+                        @onclick="Confirm">@ConfirmLabel</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public string Title { get; set; } = "Unwiderrufliche Aktion";
+    [Parameter] public string Text { get; set; } = "Diese Aktion kann nicht rückgängig gemacht werden.";
+    [Parameter] public string ConfirmLabel { get; set; } = "Ja, löschen";
+    /// <summary>Wenn gesetzt, muss der Nutzer diesen Text eintippen bevor er bestätigen kann.</summary>
+    [Parameter] public string? TypeToConfirm { get; set; }
+    [Parameter] public EventCallback OnConfirmed { get; set; }
+
+    private bool _show;
+    private string _typed = "";
+
+    private bool CanConfirm => string.IsNullOrEmpty(TypeToConfirm) ||
+                               string.Equals(_typed.Trim(), TypeToConfirm, StringComparison.Ordinal);
+
+    public void Show() { _typed = ""; _show = true; StateHasChanged(); }
+
+    private async Task Confirm()
+    {
+        if (!CanConfirm) return;
+        _show = false;
+        _typed = "";
+        await OnConfirmed.InvokeAsync();
+    }
+
+    private void Cancel() { _show = false; _typed = ""; StateHasChanged(); }
+}
