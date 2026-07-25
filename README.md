@@ -5,7 +5,7 @@ Automatische Metadaten-Extraktion beim Import (Titel-Schema, Korrespondent, Tags
 Such-/Chat-Oberfläche mit LLM Function Calling. Kein SaaS, keine Accounts, kein externer
 Lizenzserver – alles läuft lokal beim Kunden.
 
-## Architektur (analog KnxToLox)
+## Architektur 
 
 Eine Solution, vier Projekte, **ein** Host-Prozess:
 
