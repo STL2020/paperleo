@@ -1,0 +1,533 @@
+@page "/paperless-backup"
+@inject ApiClient Api
+@inject IJSRuntime JS
+@using PaperlessAiCore.Web.Services
+
+<div style="max-width:900px;padding:24px;display:flex;flex-direction:column;gap:20px;">
+
+    <!-- HEADER -->
+    <div>
+        <h1 style="font-size:20px;font-weight:800;color:var(--c-text);margin:0 0 4px;">@Loc["plbak.title"]</h1>
+        <p style="font-size:13px;color:var(--c-muted);margin:0;">@Loc["plbak.subtitle"]</p>
+    </div>
+
+    <!-- TABS -->
+    <div style="display:flex;gap:2px;background:rgba(255,255,255,.04);border-radius:10px;padding:4px;width:fit-content;">
+        @foreach (var tab in new[]{"backup","restore","schedule"})
+        {
+            var label = tab switch {
+                "backup"   => AppLoc.Current=="de" ? "Backup erstellen" : "Create Backup",
+                "restore"  => AppLoc.Current=="de" ? "Wiederherstellen" : "Restore",
+                "schedule" => AppLoc.Current=="de" ? "Zeitplan" : "Schedule",
+                _          => tab
+            };
+            <button @onclick='() => _tab = tab'
+                    style="padding:8px 18px;border-radius:8px;border:none;cursor:pointer;font-size:13px;font-weight:600;
+                           background:@(_tab==tab?"var(--c-accent)":"transparent");
+                           color:@(_tab==tab?"#fff":"var(--c-muted)");transition:all .15s;">
+                @label
+            </button>
+        }
+    </div>
+
+    @if (_tab == "backup")
+    {
+        <!-- ═══ TAB: BACKUP ERSTELLEN ═══ -->
+        @if (!_proMode)
+        {
+            <div style="background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.2);border-radius:14px;padding:32px;text-align:center;">
+                <div style="width:48px;height:48px;border-radius:50%;background:rgba(245,158,11,.12);display:flex;align-items:center;justify-content:center;margin:0 auto 14px;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="1.8" style="width:24px;height:24px;"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                </div>
+                <p style="font-size:15px;font-weight:700;color:var(--c-text);margin:0 0 8px;">@(AppLoc.Current=="de"?"Backup ist ein Pro-Feature":"Backup is a Pro feature")</p>
+                <p style="font-size:13px;color:var(--c-muted);margin:0 0 18px;max-width:400px;margin-left:auto;margin-right:auto;line-height:1.7;">
+                    @(AppLoc.Current=="de"
+                        ? "Das vollständige Paperless-ngx Backup (PDFs + Metadaten) ist in der Pro-Version verfügbar. Upgrade jetzt und sichere dein gesamtes Archiv."
+                        : "The complete Paperless-ngx backup (PDFs + metadata) is available in the Pro version. Upgrade now and back up your entire archive.")
+                </p>
+                <a href="/settings" style="display:inline-flex;align-items:center;gap:6px;padding:10px 22px;background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;border-radius:8px;font-size:13px;font-weight:700;text-decoration:none;">
+                    @(AppLoc.Current=="de"?"Auf Pro upgraden →":"Upgrade to Pro →")
+                </a>
+            </div>
+        }
+        else
+        {
+
+        <!-- Warnung -->
+        <div style="background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.2);border-radius:10px;padding:12px 16px;display:flex;gap:10px;align-items:flex-start;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" style="width:15px;height:15px;flex-shrink:0;margin-top:1px;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            <p style="font-size:12px;color:rgba(245,158,11,.9);margin:0;line-height:1.6;">@Loc["plbak.warning"]</p>
+        </div>
+
+        @if (!_isRunning && _result == null)
+        {
+            <div style="background:var(--c-surface);border:1px solid var(--c-border);border-radius:14px;padding:32px;text-align:center;">
+                <div style="width:60px;height:60px;border-radius:50%;background:rgba(29,158,117,.1);display:flex;align-items:center;justify-content:justify-center;margin:0 auto 18px;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--c-accent)" stroke-width="1.8" style="width:30px;height:30px;margin:auto;display:block;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                </div>
+                <h2 style="font-size:17px;font-weight:700;color:var(--c-text);margin:0 0 8px;">
+                    @(AppLoc.Current=="de" ? "Vollständiges Backup erstellen" : "Create full backup")
+                </h2>
+                <p style="font-size:13px;color:var(--c-muted);max-width:480px;margin:0 auto 20px;line-height:1.7;">
+                    @(AppLoc.Current=="de"
+                        ? "Sichert alle Dokumente als PDF und alle Metadaten (Tags, Korrespondenten, Dokumenttypen, Custom Fields) als ZIP-Datei."
+                        : "Backs up all documents as PDF and all metadata (tags, correspondents, document types, custom fields) as ZIP file.")
+                </p>
+
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;max-width:440px;margin:0 auto 24px;text-align:left;">
+                    @foreach (var (de, en) in new[]{
+                        ("Alle Dokumente als PDF","All documents as PDF"),
+                        ("Tags & Dokumenttypen","Tags & document types"),
+                        ("Korrespondenten","Correspondents"),
+                        ("Custom Fields","Custom fields")
+                    })
+                    {
+                        <div style="display:flex;gap:8px;align-items:center;background:rgba(29,158,117,.05);border:1px solid rgba(29,158,117,.15);border-radius:7px;padding:8px 10px;">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="var(--c-accent)" stroke-width="2.5" style="width:12px;height:12px;flex-shrink:0;"><polyline points="20 6 9 17 4 12"/></svg>
+                            <span style="font-size:12px;color:var(--c-text);">@(AppLoc.Current=="de"?de:en)</span>
+                        </div>
+                    }
+                </div>
+
+                <!-- PDF-Option -->
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;padding:12px 16px;background:rgba(255,255,255,.03);border:1px solid var(--c-border);border-radius:10px;">
+                    <input type="checkbox" id="cbPdf" @bind="_includePdfs" style="width:16px;height:16px;accent-color:var(--c-accent);" />
+                    <label for="cbPdf" style="font-size:13px;color:var(--c-text);cursor:pointer;flex:1;">
+                        @(AppLoc.Current == "de" ? "PDFs einschließen" : "Include PDFs")
+                    </label>
+                    @if (_includePdfs)
+                    {
+                        <span style="font-size:11px;color:#f59e0b;display:flex;align-items:center;gap:4px;">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+                            @(AppLoc.Current == "de" ? "Dauert länger bei großen Archiven" : "Takes longer for large archives")
+                        </span>
+                    }
+                    else
+                    {
+                        <span style="font-size:11px;color:var(--c-muted);">@(AppLoc.Current == "de" ? "Nur Metadaten" : "Metadata only")</span>
+                    }
+                </div>
+
+                <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                    <button class="btn" @onclick="StartBackup"
+                            style="background:var(--c-accent);color:#fff;font-weight:700;display:inline-flex;align-items:center;gap:8px;padding:12px 28px;font-size:14px;">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        @Loc["plbak.start"]
+                    </button>
+                    @if (!_includePdfs)
+                    {
+                        <span style="font-size:11px;color:var(--c-muted);align-self:center;">@(AppLoc.Current == "de" ? "Schnelles Metadaten-Backup" : "Quick metadata backup")</span>
+                    }
+                </div>
+            </div>
+        }
+
+        @if (_isRunning)
+        {
+            <div class="pl-progress-wrap">
+                <div class="pl-progress-spinner"></div>
+                <p class="pl-progress-title">@Loc["plbak.running"]</p>
+                <p class="pl-progress-phase">@_phase</p>
+                <div class="pl-progress-track">
+                    <div class="pl-progress-fill" style="width:@(_progress)%;"></div>
+                </div>
+                <p class="pl-progress-pct">@_progress%</p>
+            </div>
+        }
+
+        @if (_result != null && !_isRunning)
+        {
+            @if (_result.Success)
+            {
+                <div style="background:var(--c-surface);border:1px solid rgba(29,158,117,.3);border-radius:14px;padding:28px;text-align:center;">
+                    <div style="width:52px;height:52px;border-radius:50%;background:rgba(29,158,117,.12);display:flex;align-items:center;justify-content:center;margin:0 auto 14px;">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="var(--c-accent)" stroke-width="2.5" style="width:26px;height:26px;"><polyline points="20 6 9 17 4 12"/></svg>
+                    </div>
+                    <p style="font-size:17px;font-weight:800;color:var(--c-text);margin:0 0 4px;">
+                        @(AppLoc.Current=="de" ? "Backup erfolgreich!" : "Backup successful!")
+                    </p>
+                    <p style="font-size:12px;color:var(--c-muted);margin:0 0 20px;">@DateTime.Now.ToString("dd.MM.yyyy HH:mm")</p>
+
+                    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;max-width:480px;margin:0 auto 22px;">
+                        @foreach (var (label, val) in new[]{
+                            (Loc["plbak.docs"], _result.TotalDocuments.ToString()),
+                            (Loc["plbak.pdfs"], _result.DownloadedDocuments.ToString()),
+                            (Loc["plbak.size"], $"{_result.ZipSizeMb:F1} MB"),
+                        })
+                        {
+                            <div style="background:rgba(29,158,117,.06);border:1px solid rgba(29,158,117,.15);border-radius:9px;padding:12px;">
+                                <p style="font-size:20px;font-weight:800;color:var(--c-accent);margin:0;">@val</p>
+                                <p style="font-size:11px;color:var(--c-muted);margin:3px 0 0;">@label</p>
+                            </div>
+                        }
+                    </div>
+
+                    @if (_result.FailedDocumentIds.Any())
+                    {
+                        <p style="font-size:12px;color:#f59e0b;margin:0 0 14px;">
+                            @Loc["plbak.failed"] @_result.FailedDocumentIds.Count
+                            (IDs: @string.Join(", ", _result.FailedDocumentIds.Take(10))@(_result.FailedDocumentIds.Count > 10 ? " …" : ""))
+                        </p>
+                    }
+
+                    <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
+                        <a href="@Api.GetBackupDownloadUrl()" class="btn"
+                           style="background:var(--c-accent);color:#fff;font-weight:700;display:inline-flex;align-items:center;gap:8px;text-decoration:none;" download>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                            @Loc["plbak.download"]
+                        </a>
+                        <button class="btn secondary" @onclick="Reset">@Loc["plbak.new"]</button>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <div style="background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.2);border-radius:12px;padding:20px;">
+                    <p style="font-size:14px;font-weight:600;color:#ef4444;margin:0 0 6px;">
+                        @(AppLoc.Current=="de" ? "Backup fehlgeschlagen" : "Backup failed")
+                    </p>
+                    <p style="font-size:12px;color:var(--c-muted);margin:0 0 14px;">@_result.Error</p>
+                    <button class="btn secondary" @onclick="Reset">@(AppLoc.Current=="de" ? "Erneut versuchen" : "Try again")</button>
+                </div>
+            }
+        }
+    }
+
+        }
+    }
+
+    @if (_tab == "restore")
+    {
+        <!-- ═══ TAB: WIEDERHERSTELLEN ═══ -->
+        <div style="display:flex;flex-direction:column;gap:16px;">
+
+            <!-- Metadaten Restore -->
+            <div style="background:var(--c-surface);border:1px solid var(--c-border);border-radius:14px;padding:28px;">
+                <div style="display:flex;align-items:flex-start;gap:14px;margin-bottom:16px;">
+                    <div style="width:40px;height:40px;border-radius:10px;background:rgba(48,143,209,.1);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="#308fd1" stroke-width="1.8" style="width:20px;height:20px;"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+                    </div>
+                    <div>
+                        <h3 style="font-size:15px;font-weight:700;color:var(--c-text);margin:0 0 6px;">@Loc["plbak.restore_title"]</h3>
+                        <p style="font-size:12px;color:var(--c-muted);margin:0;line-height:1.6;">
+                            @(AppLoc.Current=="de"
+                                ? "Stellt Tags, Korrespondenten, Dokumenttypen und Custom Fields wieder her. Schnell, keine Dokument-Verarbeitung."
+                                : "Restores tags, correspondents, document types and custom fields. Fast, no document processing.")
+                        </p>
+                    </div>
+                </div>
+
+                @if (_restoreMetaResult != null)
+                {
+                    <div style="margin-bottom:14px;padding:12px;background:@(_restoreMetaResult.Success ? "rgba(29,158,117,.06)" : "rgba(239,68,68,.06)");border:1px solid @(_restoreMetaResult.Success ? "rgba(29,158,117,.2)" : "rgba(239,68,68,.2)");border-radius:9px;">
+                        @if (_restoreMetaResult.Success)
+                        {
+                            <p style="font-size:12px;color:var(--c-accent);font-weight:600;margin:0 0 8px;">✓ @_restoreMetaResult.ManifestInfo</p>
+                            <div style="display:flex;flex-wrap:wrap;gap:6px;">
+                                @foreach (var (label, val) in new[]{
+                                    ("Tags", _restoreMetaResult.TagsRestored),
+                                    (AppLoc.Current=="de"?"Korrespondenten":"Correspondents", _restoreMetaResult.CorrespondentsRestored),
+                                    (AppLoc.Current=="de"?"Dokumenttypen":"Document Types", _restoreMetaResult.DocumentTypesRestored),
+                                    ("Custom Fields", _restoreMetaResult.CustomFieldsRestored),
+                                })
+                                {
+                                    <span style="font-size:11px;background:rgba(29,158,117,.1);border:1px solid rgba(29,158,117,.2);border-radius:5px;padding:2px 8px;color:var(--c-accent);">@label: @val</span>
+                                }
+                            </div>
+                        }
+                        else
+                        {
+                            <p style="font-size:13px;color:#ef4444;margin:0;">@_restoreMetaResult.Error</p>
+                        }
+                    </div>
+                }
+
+                @if (_isRestoring && _restoreType == "meta")
+                {
+                    <div style="display:flex;align-items:center;gap:8px;color:var(--c-muted);font-size:13px;">
+                        <div class="loading-spinner" style="width:16px;height:16px;border-width:2px;"></div>
+                        @Loc["plbak.restore_running"]
+                    </div>
+                }
+                else
+                {
+                    <label style="display:inline-flex;align-items:center;gap:8px;padding:9px 18px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.1);border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;color:var(--c-text);transition:border-color .15s;" onmouseover="this.style.borderColor='rgba(29,158,117,.4)'" onmouseout="this.style.borderColor='rgba(255,255,255,.1)'">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                        @Loc["plbak.restore_btn"]
+                        <InputFile OnChange="RestoreMetadata" accept=".zip" style="display:none;" />
+                    </label>
+                }
+            </div>
+
+            <!-- PDF Restore -->
+            <div style="background:var(--c-surface);border:1px solid var(--c-border);border-radius:14px;padding:28px;">
+                <div style="display:flex;align-items:flex-start;gap:14px;margin-bottom:16px;">
+                    <div style="width:40px;height:40px;border-radius:10px;background:rgba(63,168,110,.1);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="var(--c-accent)" stroke-width="1.8" style="width:20px;height:20px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                    </div>
+                    <div>
+                        <h3 style="font-size:15px;font-weight:700;color:var(--c-text);margin:0 0 6px;">
+                            @(AppLoc.Current=="de" ? "PDFs wiederherstellen" : "Restore PDFs")
+                        </h3>
+                        <p style="font-size:12px;color:var(--c-muted);margin:0;line-height:1.6;">
+                            @(AppLoc.Current=="de"
+                                ? "Spielt alle PDFs aus dem Backup über den nativen Paperless-ngx Import-Endpunkt zurück. Paperless verarbeitet die Dokumente in seiner eigenen Queue."
+                                : "Restores all PDFs from the backup via the native Paperless-ngx import endpoint. Paperless processes documents in its own queue.")
+                        </p>
+                    </div>
+                </div>
+
+                @if (_restorePdfResult != null)
+                {
+                    <div style="margin-bottom:14px;padding:12px;background:@(_restorePdfResult.Success ? "rgba(29,158,117,.06)" : "rgba(239,68,68,.06)");border:1px solid @(_restorePdfResult.Success ? "rgba(29,158,117,.2)" : "rgba(239,68,68,.2)");border-radius:9px;">
+                        <p style="font-size:12px;font-weight:600;color:@(_restorePdfResult.Success ? "var(--c-accent)" : "#ef4444");margin:0 0 4px;">
+                            @(_restorePdfResult.Success ? ("✓ " + (_restorePdfResult.ManifestInfo ?? "Fertig")) : _restorePdfResult.Error)
+                        </p>
+                        @if (_restorePdfResult.Errors.Any())
+                        {
+                            <p style="font-size:11px;color:#f59e0b;margin:4px 0 0;">@_restorePdfResult.Errors.Count @(AppLoc.Current=="de"?"Fehler":"errors")</p>
+                        }
+                    </div>
+                }
+
+                @if (_isRestoring && _restoreType == "pdf")
+                {
+                    <div style="display:flex;align-items:center;gap:8px;color:var(--c-muted);font-size:13px;">
+                        <div class="loading-spinner" style="width:16px;height:16px;border-width:2px;"></div>
+                        @(AppLoc.Current=="de" ? "PDFs werden hochgeladen …" : "Uploading PDFs …")
+                        @if (_restoreProgress > 0) { <span style="color:var(--c-accent);font-weight:600;">@_restoreProgress%</span> }
+                    </div>
+                }
+                else
+                {
+                    <label style="display:inline-flex;align-items:center;gap:8px;padding:9px 18px;background:rgba(29,158,117,.06);border:1px solid rgba(29,158,117,.2);border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;color:var(--c-accent);transition:border-color .15s;" onmouseover="this.style.borderColor='rgba(29,158,117,.5)'" onmouseout="this.style.borderColor='rgba(29,158,117,.2)'">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                        @(AppLoc.Current=="de" ? "Backup-ZIP für PDF-Restore auswählen" : "Select backup ZIP for PDF restore")
+                        <InputFile OnChange="RestorePdfs" accept=".zip" style="display:none;" />
+                    </label>
+                }
+            </div>
+        </div>
+    }
+
+    @if (_tab == "schedule")
+    {
+        <!-- ═══ TAB: ZEITPLAN ═══ -->
+        @if (!_proMode)
+        {
+            <div style="background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.2);border-radius:14px;padding:28px;text-align:center;">
+                <div style="width:48px;height:48px;border-radius:50%;background:rgba(245,158,11,.12);display:flex;align-items:center;justify-content:center;margin:0 auto 14px;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="1.8" style="width:24px;height:24px;"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                </div>
+                <p style="font-size:15px;font-weight:700;color:var(--c-text);margin:0 0 8px;">@(AppLoc.Current=="de"?"Nur in Pro verfügbar":"Pro feature only")</p>
+                <p style="font-size:13px;color:var(--c-muted);margin:0 0 18px;max-width:360px;margin-left:auto;margin-right:auto;">
+                    @(AppLoc.Current=="de"
+                        ? "Automatische zeitgesteuerte Backups sind ein Pro-Feature. Upgrade auf Pro um täglich, wöchentlich oder monatlich automatisch zu sichern."
+                        : "Automatic scheduled backups are a Pro feature. Upgrade to Pro to back up automatically on a daily, weekly or monthly schedule.")
+                </p>
+                <a href="/settings" style="display:inline-flex;align-items:center;gap:6px;padding:10px 22px;background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;border-radius:8px;font-size:13px;font-weight:700;text-decoration:none;">
+                    @(AppLoc.Current=="de"?"Auf Pro upgraden →":"Upgrade to Pro →")
+                </a>
+            </div>
+        }
+        else
+        {
+        <div style="background:var(--c-surface);border:1px solid var(--c-border);border-radius:14px;padding:28px;">
+            <h3 style="font-size:16px;font-weight:700;color:var(--c-text);margin:0 0 6px;">
+                @(AppLoc.Current=="de" ? "Automatisches Backup" : "Automatic Backup")
+            </h3>
+            <p style="font-size:13px;color:var(--c-muted);margin:0 0 22px;line-height:1.6;">
+                @(AppLoc.Current=="de"
+                    ? "paperLeo erstellt automatisch ein Backup und speichert es im konfigurierten Zielpfad."
+                    : "paperLeo automatically creates a backup and saves it to the configured target path.")
+            </p>
+
+            <div style="display:flex;flex-direction:column;gap:14px;">
+
+                <!-- Häufigkeit -->
+                <div class="sfield">
+                    <label>@(AppLoc.Current=="de" ? "Häufigkeit" : "Frequency")</label>
+                    <select @bind="_schedule" style="width:100%;background:var(--c-bg);border:1px solid var(--c-border);border-radius:8px;padding:10px 14px;font-size:14px;color:var(--c-text);outline:none;">
+                        <option value="none">@(AppLoc.Current=="de" ? "Deaktiviert" : "Disabled")</option>
+                        <option value="daily">@(AppLoc.Current=="de" ? "Täglich (02:00 Uhr)" : "Daily (2:00 AM)")</option>
+                        <option value="weekly">@(AppLoc.Current=="de" ? "Wöchentlich" : "Weekly")</option>
+                        <option value="monthly">@(AppLoc.Current=="de" ? "Monatlich (1. des Monats)" : "Monthly (1st of month)")</option>
+                    </select>
+                </div>
+
+                @if (_schedule == "weekly")
+                {
+                    <div class="sfield">
+                        <label>@(AppLoc.Current=="de" ? "Wochentag" : "Day of week")</label>
+                        <select @bind="_scheduleDay" style="width:100%;background:var(--c-bg);border:1px solid var(--c-border);border-radius:8px;padding:10px 14px;font-size:14px;color:var(--c-text);outline:none;">
+                            @foreach (var (val, de, en) in new[]{
+                                ("monday","Montag","Monday"),("tuesday","Dienstag","Tuesday"),
+                                ("wednesday","Mittwoch","Wednesday"),("thursday","Donnerstag","Thursday"),
+                                ("friday","Freitag","Friday"),("saturday","Samstag","Saturday"),
+                                ("sunday","Sonntag","Sunday")
+                            })
+                            {
+                                <option value="@val">@(AppLoc.Current=="de"?de:en)</option>
+                            }
+                        </select>
+                    </div>
+                }
+
+                <!-- Zielpfad -->
+                <div class="sfield">
+                    <label>@(AppLoc.Current=="de" ? "Zielpfad (im Container)" : "Target path (in container)")</label>
+                    <input @bind="_schedulePath" placeholder="/app/data/backups"
+                           style="width:100%;background:var(--c-bg);border:1px solid var(--c-border);border-radius:8px;padding:10px 14px;font-size:14px;color:var(--c-text);outline:none;font-family:monospace;" />
+                    <p style="font-size:11px;color:var(--c-muted);margin:6px 0 0;">
+                        @(AppLoc.Current=="de"
+                            ? "Stelle sicher, dass dieser Pfad als Volume gemountet ist (z.B. /volume1/DMS/Backup)."
+                            : "Make sure this path is mounted as a volume (e.g. /volume1/DMS/Backup).")
+                    </p>
+                </div>
+
+                @if (_schedule != "none")
+                {
+                    <div style="padding:10px 14px;background:rgba(29,158,117,.05);border:1px solid rgba(29,158,117,.15);border-radius:8px;font-size:12px;color:var(--c-muted);">
+                        @(AppLoc.Current=="de" ? "Nächstes Backup: " : "Next backup: ")
+                        <strong style="color:var(--c-accent);">
+                            @(_schedule == "daily" ? (AppLoc.Current=="de" ? "Heute Nacht 02:00" : "Tonight at 2:00 AM")
+                              : _schedule == "weekly" ? (AppLoc.Current=="de" ? $"Nächsten {_scheduleDay} 02:00" : $"Next {_scheduleDay} at 2:00 AM")
+                              : (AppLoc.Current=="de" ? "1. des nächsten Monats 02:00" : "1st of next month at 2:00 AM"))
+                        </strong>
+                    </div>
+                }
+
+                <button class="btn" @onclick="SaveSchedule"
+                        style="background:var(--c-accent);color:#fff;font-weight:700;display:inline-flex;align-items:center;gap:8px;width:fit-content;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                    @(AppLoc.Current=="de" ? "Zeitplan speichern" : "Save schedule")
+                </button>
+
+                @if (_scheduleSaved)
+                {
+                    <span style="font-size:12px;color:var(--c-accent);">✓ @(AppLoc.Current=="de" ? "Gespeichert" : "Saved")</span>
+                }
+            </div>
+        </div>
+
+        <!-- Hinweis Docker -->
+        <div style="background:var(--c-surface);border:1px solid var(--c-border);border-radius:12px;padding:20px;">
+            <p style="font-size:13px;font-weight:600;color:var(--c-text);margin:0 0 8px;">
+                @(AppLoc.Current=="de" ? "Docker-Volume für Backups einrichten" : "Set up Docker volume for backups")
+            </p>
+            <div style="background:#0f171e;border-radius:8px;padding:14px;font-family:monospace;font-size:12px;color:#7dd3a8;line-height:1.8;overflow-x:auto;">
+                paperleo:<br/>
+                &nbsp;&nbsp;volumes:<br/>
+                &nbsp;&nbsp;&nbsp;&nbsp;- /volume1/DMS/Backup:/app/data/backups
+            </div>
+        </div>
+        }
+    }
+
+</div>
+
+@code {
+    private string _tab         = "backup";
+    private bool   _isRunning   = false;
+    private bool   _isRestoring = false;
+    private bool   _includePdfs = true;
+    private bool   _proMode     = false;
+    private string _restoreType = "";
+    private int    _progress    = 0;
+    private int    _restoreProgress = 0;
+    private string _phase       = "";
+    private BackupResult?  _result            = null;
+    private RestoreResult? _restoreMetaResult = null;
+    private RestoreResult? _restorePdfResult  = null;
+    private System.Threading.Timer? _pollTimer;
+
+    // Schedule
+    private string _schedule     = "none";
+    private string _scheduleDay  = "monday";
+    private string _schedulePath = "/app/data/backups";
+    private bool   _scheduleSaved = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Pro-Mode laden
+        try { var s = await Api.GetStatusAsync(); _proMode = s.ProMode; } catch { }
+
+        // Backup-Status laden
+        var status = await Api.GetBackupStatusAsync();
+        if (status.IsRunning) { _isRunning = true; _progress = status.Progress; _phase = status.Phase; StartPolling(); }
+        else if (status.LastResult != null) { _result = status.LastResult; }
+
+        // Schedule aus Settings laden
+        var settings = await Api.GetSettingsAsync();
+        _schedule     = settings.BackupSchedule    ?? "none";
+        _scheduleDay  = settings.BackupScheduleDay ?? "monday";
+        _schedulePath = settings.BackupTargetPath  ?? "/app/data/backups";
+    }
+
+    private async Task StartBackup()
+    {
+        _result = null; _isRunning = true; _progress = 0;
+        _phase = AppLoc.Current == "de" ? "Starte …" : "Starting …";
+        var ok = await Api.StartBackupAsync();
+        if (ok) StartPolling();
+        else { _isRunning = false; _result = new BackupResult { Success = false, Error = "Backup konnte nicht gestartet werden." }; }
+    }
+
+    private void StartPolling()
+    {
+        _pollTimer?.Dispose();
+        _pollTimer = new System.Threading.Timer(async _ =>
+        {
+            var s = await Api.GetBackupStatusAsync();
+            _progress = s.Progress; _phase = s.Phase;
+            if (!s.IsRunning) { _isRunning = false; _result = s.LastResult; _pollTimer?.Dispose(); }
+            await InvokeAsync(StateHasChanged);
+        }, null, 2000, 2000);
+    }
+
+    private async Task RestoreMetadata(InputFileChangeEventArgs e)
+    {
+        _isRestoring = true; _restoreType = "meta"; _restoreMetaResult = null; StateHasChanged();
+        try
+        {
+            var stream = e.File.OpenReadStream(maxAllowedSize: 10L * 1024 * 1024 * 1024);
+            _restoreMetaResult = await Api.RestoreFromZipAsync(stream);
+        }
+        catch (Exception ex) { _restoreMetaResult = new RestoreResult { Success = false, Error = ex.Message }; }
+        finally { _isRestoring = false; _restoreType = ""; StateHasChanged(); }
+    }
+
+    private async Task RestorePdfs(InputFileChangeEventArgs e)
+    {
+        _isRestoring = true; _restoreType = "pdf"; _restorePdfResult = null; _restoreProgress = 0; StateHasChanged();
+        try
+        {
+            var stream = e.File.OpenReadStream(maxAllowedSize: 10L * 1024 * 1024 * 1024);
+            _restorePdfResult = await Api.RestorePdfsFromZipAsync(stream);
+        }
+        catch (Exception ex) { _restorePdfResult = new RestoreResult { Success = false, Error = ex.Message }; }
+        finally { _isRestoring = false; _restoreType = ""; StateHasChanged(); }
+    }
+
+    private async Task SaveSchedule()
+    {
+        var settings = await Api.GetSettingsAsync();
+        settings.BackupSchedule    = _schedule;
+        settings.BackupScheduleDay = _scheduleDay;
+        settings.BackupTargetPath  = _schedulePath;
+        await Api.SaveSettingsAsync(settings);
+        _scheduleSaved = true;
+        StateHasChanged();
+        await Task.Delay(2000);
+        _scheduleSaved = false;
+        StateHasChanged();
+    }
+
+    private async Task Reset()
+    {
+        await Api.ResetBackupStatusAsync();
+        _result = null; _isRunning = false; _progress = 0; _phase = "";
+    }
+
+    public void Dispose() => _pollTimer?.Dispose();
+}

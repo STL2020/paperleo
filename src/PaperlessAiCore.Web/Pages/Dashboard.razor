@@ -1,0 +1,743 @@
+@using PaperlessAiCore.Shared
+@page "/"
+@implements IDisposable
+@inject ApiClient Api
+@inject IJSRuntime JS
+
+<style>
+    @@keyframes slideInRight { from { transform:translateX(100%); opacity:0; } to { transform:none; opacity:1; } }
+</style>
+
+<div style="padding:20px 24px;display:flex;flex-direction:column;gap:14px;">
+
+    <!-- HEADER -->
+    <div style="display:flex;align-items:center;gap:8px;">
+        <button @onclick="ToggleLogPanel"
+                style="background:@(_logPanelOpen?"rgba(29,158,117,.15)":"rgba(255,255,255,.04)");border:0.5px solid @(_logPanelOpen?"var(--c-accent)":"rgba(255,255,255,.08)");border-radius:7px;padding:6px 10px;cursor:pointer;color:@(_logPanelOpen?"var(--c-accent)":"var(--c-muted)");display:flex;align-items:center;gap:5px;font-size:11px;"
+                title="Live Log">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            Log
+        </button>
+        <button @onclick="RestartApp" disabled="@_restarting"
+                style="background:none;border:0.5px solid var(--c-border);color:var(--c-muted);border-radius:7px;padding:6px 7px;cursor:pointer;opacity:.45;transition:opacity .15s;"
+                title="Neustart" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='.45'">
+            @if (_restarting)
+            {
+                <div class="loading-spinner" style="width:13px;height:13px;border-width:2px;"></div>
+            }
+            else
+            {
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;display:block;"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+            }
+        </button>
+        <button @onclick="ScanNow" disabled="@(_scanning||_autoIsScanning)"
+                style="background:var(--c-accent);color:white;border:none;border-radius:8px;padding:7px 16px;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px;">
+            @if (_scanning || _autoIsScanning)
+            {
+                <div class="pl-progress-spinner" style="width:14px;height:14px;border-width:2px;margin:0;"></div>
+            }
+            else
+            {
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px;"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                @Loc["dash.scan_now"]
+            }
+        </button>
+    </div>
+
+    <!-- SCAN RESULT -->
+    @if (_scanResult is not null && !_scanning)
+    {
+        <div style="padding:10px 14px;border-radius:8px;font-size:13px;background:@(_scanResult.Success?"rgba(34,197,94,.08)":"rgba(220,38,38,.08)");color:@(_scanResult.Success?"#4ade80":"#f87171");border:1px solid @(_scanResult.Success?"rgba(34,197,94,.15)":"rgba(220,38,38,.15)");">
+            @(_scanResult.Success ? $"✅ {_scanResult.ProcessedCount} Dok. verarbeitet" : $"❌ {_scanResult.Message}")
+        </div>
+    }
+
+    <!-- LOADING -->
+    @if (_loading)
+    {
+        <div class="pl-progress-wrap">
+            <div class="pl-progress-spinner"></div>
+            <p class="pl-progress-title">@_loadingPhase</p>
+            <div class="pl-progress-track"><div class="pl-progress-fill-indeterminate"></div></div>
+        </div>
+    }
+    else if (_dto is not null)
+    {
+        <!-- DEMO LIMIT -->
+        @if (!_dto.ProMode)
+        {
+            var dp = (int)Math.Min(100, Math.Max(0, 100 - (_dto.DemoDocsRemaining * 100.0 / 50)));
+            <div style="background:rgba(255,255,255,.02);border:0.5px solid rgba(255,255,255,.06);border-radius:10px;padding:14px 16px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                    <span style="font-size:13px;">Demo · <strong>@_dto.DemoDocsRemaining</strong> von 50</span>
+                    <a href="/settings" style="font-size:12px;font-weight:500;color:#d69a2d;text-decoration:none;">Vollversion →</a>
+                </div>
+                <div style="height:6px;background:rgba(255,255,255,.06);border-radius:999px;overflow:hidden;">
+                    <div style="height:100%;width:@dp%;background:linear-gradient(90deg,#1d9e75,#308fd1);border-radius:999px;"></div>
+                </div>
+            </div>
+        }
+
+        <!-- PROGRESS BAR — only when scanning, same width as KPI grid -->
+        @if (_scanning || _autoIsScanning || _dto.IsScanning)
+        {
+            var curDoc = _currentScanDoc ?? _dto.CurrentScanDocument;
+            <div style="display:grid;grid-template-columns:1fr;gap:0;">
+                <div style="background:var(--c-surface);border:0.5px solid rgba(29,158,117,.3);border-radius:12px;padding:10px 14px;">
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+                        <div class="pl-progress-spinner" style="width:13px;height:13px;border-width:2px;margin:0;flex-shrink:0;"></div>
+                        <span style="font-size:12px;color:var(--c-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                            @(string.IsNullOrEmpty(curDoc) ? "Scan läuft…" : curDoc)
+                        </span>
+                    </div>
+                    <div class="pl-progress-track"><div class="pl-progress-fill-indeterminate"></div></div>
+                </div>
+            </div>
+        }
+
+        <!-- KPI GRID -->
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;">
+
+            <div style="background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.18);border-radius:12px;padding:16px;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="1.6" style="width:22px;height:22px;margin-bottom:8px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                <div style="font-size:28px;font-weight:700;color:var(--c-text);margin-bottom:4px;">@_animDocs.ToString("N0")</div>
+                <div style="font-size:10px;color:var(--c-muted);text-transform:uppercase;letter-spacing:.07em;">@Loc["dash.docs_total"]</div>
+            </div>
+
+            <div style="background:rgba(29,158,117,.08);border:1px solid rgba(29,158,117,.18);border-radius:12px;padding:16px;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="#1d9e75" stroke-width="1.6" style="width:22px;height:22px;margin-bottom:8px;"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                <div style="font-size:28px;font-weight:700;color:#1d9e75;margin-bottom:4px;">@_animProcessed.ToString("N0")</div>
+                <div style="font-size:10px;color:var(--c-muted);text-transform:uppercase;letter-spacing:.07em;">@Loc["dash.docs_proc"]</div>
+            </div>
+
+            <div style="background:rgba(48,143,209,.08);border:1px solid rgba(48,143,209,.18);border-radius:12px;padding:16px;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="#308fd1" stroke-width="1.6" style="width:22px;height:22px;margin-bottom:8px;"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                <div style="font-size:28px;font-weight:700;color:var(--c-text);margin-bottom:4px;">@_animCorrespondents.ToString("N0")</div>
+                <div style="font-size:10px;color:var(--c-muted);text-transform:uppercase;letter-spacing:.07em;">Korrespondenten</div>
+            </div>
+
+            <div style="background:rgba(29,158,117,.04);border:1px solid rgba(29,158,117,.12);border-radius:12px;padding:16px;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="#1d9e75" stroke-width="1.6" style="width:22px;height:22px;margin-bottom:8px;"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                <div style="font-size:28px;font-weight:700;color:#1d9e75;margin-bottom:4px;">@(_dto.PaperlessVersion ?? "–")</div>
+                <div style="font-size:10px;color:var(--c-muted);text-transform:uppercase;letter-spacing:.07em;">Paperless-NGX</div>
+            </div>
+
+        </div>
+
+        <!-- CHARTS -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+            <div style="background:rgba(255,255,255,.02);border:0.5px solid rgba(255,255,255,.06);border-radius:14px;padding:20px;">
+                <p style="font-size:13px;font-weight:600;color:var(--c-muted);margin:0 0 16px;">Verarbeitungsfortschritt</p>
+                <div style="display:flex;align-items:center;gap:20px;">
+                    <div style="position:relative;width:100px;height:100px;flex-shrink:0;">
+                        <canvas id="processingDonut" width="100" height="100"></canvas>
+                        <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;color:var(--c-text);">
+                            @if (_dto.TotalDocuments > 0) { @(Math.Round(_dto.ProcessedDocuments * 100.0 / _dto.TotalDocuments, 0).ToString() + "%") }
+                        </div>
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:4px;flex:1;min-width:0;">
+                        <div style="display:flex;align-items:center;gap:6px;font-size:12px;">
+                            <div style="width:10px;height:10px;border-radius:2px;background:#6366f1;flex-shrink:0;"></div>
+                            <span style="color:var(--c-muted);">@Loc["dash.docs_proc"]:</span>
+                            <span style="font-weight:600;color:var(--c-text);">@_dto.ProcessedDocuments.ToString("N0")</span>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:6px;font-size:12px;">
+                            <div style="width:10px;height:10px;border-radius:2px;background:rgba(148,163,184,.15);flex-shrink:0;"></div>
+                            <span style="color:var(--c-muted);">Offen:</span>
+                            <span style="font-weight:600;color:var(--c-text);">@(Math.Max(0,_dto.TotalDocuments-_dto.ProcessedDocuments).ToString("N0"))</span>
+                        </div>
+                        @if (_dto.AutoModeEnabled)
+                        {
+                            <div style="display:inline-flex;align-items:center;gap:4px;margin-top:4px;padding:3px 10px;background:rgba(29,158,117,.15);border-radius:999px;font-size:11px;color:var(--c-accent);font-weight:500;width:fit-content;">
+                                <div style="width:6px;height:6px;border-radius:50%;background:var(--c-accent);"></div>
+                                Auto aktiv
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+            <div style="background:rgba(255,255,255,.02);border:0.5px solid rgba(255,255,255,.06);border-radius:14px;padding:20px;">
+                <p style="font-size:13px;font-weight:600;color:var(--c-muted);margin:0 0 16px;">Dokumenttypen</p>
+                <div style="display:flex;align-items:center;gap:16px;">
+                    <div style="position:relative;width:100px;height:100px;flex-shrink:0;">
+                        <canvas id="docTypeDonut" width="100" height="100"></canvas>
+                    </div>
+                    @if (_dto.DocumentTypeDistribution is { Count: > 0 })
+                    {
+                        <div style="display:flex;flex-direction:column;gap:4px;flex:1;min-width:0;">
+                            @foreach (var dt in _dto.DocumentTypeDistribution.Take(5))
+                            {
+                                var idx = _dto.DocumentTypeDistribution.IndexOf(dt);
+                                var col = DonutColors[idx % DonutColors.Length];
+                                <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;">
+                                    <div style="display:flex;align-items:center;gap:6px;overflow:hidden;">
+                                        <div style="width:8px;height:8px;border-radius:2px;background:@col;flex-shrink:0;"></div>
+                                        <span style="color:var(--c-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">@dt.Type</span>
+                                    </div>
+                                    <span style="color:var(--c-muted);flex-shrink:0;margin-left:8px;">@dt.Count</span>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <!-- TOKEN & KI GROUP BOX -->
+        <div style="background:rgba(255,255,255,.02);border:0.5px solid rgba(255,255,255,.06);border-radius:14px;overflow:hidden;">
+            <div style="padding:10px 16px;border-bottom:0.5px solid rgba(255,255,255,.04);display:flex;align-items:center;gap:8px;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="var(--c-accent)" stroke-width="1.8" style="width:14px;height:14px;flex-shrink:0;"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
+                <span style="font-size:11px;font-weight:600;color:var(--c-muted);letter-spacing:.07em;text-transform:uppercase;">Token-Nutzung & KI-Kosten</span>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:0;">
+                <div style="padding:14px 16px;border-right:0.5px solid rgba(255,255,255,.04);">
+                    <p style="font-size:10px;color:var(--c-muted);text-transform:uppercase;letter-spacing:.06em;margin:0 0 10px;">Gesamt</p>
+                    @if (_dto.TotalTokensUsed > 0)
+                    {
+                        <div style="display:flex;flex-direction:column;gap:0;">
+                            <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:0.5px solid rgba(255,255,255,.04);font-size:12px;">
+                                <span style="color:var(--c-muted);">Tokens gesamt</span>
+                                <span style="font-weight:600;">@_animTokens.ToString("N0")</span>
+                            </div>
+                            <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:0.5px solid rgba(255,255,255,.04);font-size:12px;">
+                                <span style="color:var(--c-muted);">Ø Prompt</span>
+                                <span>@_dto.AveragePromptTokens.ToString("N0")</span>
+                            </div>
+                            <div style="display:flex;justify-content:space-between;padding:5px 0;font-size:12px;">
+                                <span style="color:var(--c-muted);">Ø Completion</span>
+                                <span>@_dto.AverageCompletionTokens.ToString("N0")</span>
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <p style="font-size:12px;color:var(--c-muted);margin:0;">Noch keine Dokumente verarbeitet.</p>
+                    }
+                </div>
+                <div style="padding:14px 16px;">
+                    @{
+                        var kiOk = _dto.LlmHealth == "ok";
+                        var kiColor = kiOk ? "#1d9e75" : (_dto.LlmHealth == "unknown" ? "var(--c-muted)" : "#ef4444");
+                        var kiLabel = kiOk ? $"Verbunden ({_dto.LlmProvider ?? "KI"})" : (_dto.LlmHealth == "unknown" ? "Nicht konfiguriert" : "Fehler");
+                    }
+                    <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:0.5px solid rgba(255,255,255,.04);font-size:12px;margin-bottom:8px;">
+                        <span style="color:var(--c-muted);">KI-Status</span>
+                        <span style="color:@kiColor;display:flex;align-items:center;gap:4px;">
+                            <span style="width:6px;height:6px;border-radius:50%;background:@kiColor;display:inline-block;"></span>
+                            @kiLabel
+                        </span>
+                    </div>
+                    <p style="font-size:10px;color:var(--c-muted);text-transform:uppercase;letter-spacing:.06em;margin:0 0 10px;">KI · Dieser Monat</p>
+                    <div style="display:flex;flex-direction:column;gap:0;">
+                        <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:0.5px solid rgba(255,255,255,.04);font-size:12px;">
+                            <span style="color:var(--c-muted);">Tokens</span>
+                            <span style="font-weight:600;color:var(--c-accent);">@_dto.MonthTokensUsed.ToString("N0")</span>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;padding:5px 0;font-size:12px;">
+                            <span style="color:var(--c-muted);">Kosten (est.)</span>
+                            <span>€ @_dto.MonthCostEurEst.ToString("F4")</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- SYSTEM STATUS GROUP BOX -->
+        <div style="background:rgba(255,255,255,.02);border:0.5px solid rgba(255,255,255,.06);border-radius:14px;overflow:hidden;">
+            <div style="padding:10px 16px;border-bottom:0.5px solid rgba(255,255,255,.04);display:flex;align-items:center;gap:8px;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="var(--c-accent)" stroke-width="1.8" style="width:14px;height:14px;flex-shrink:0;"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+                <span style="font-size:11px;font-weight:600;color:var(--c-muted);letter-spacing:.07em;text-transform:uppercase;">System-Status & Ressourcen</span>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:0;">
+                <div style="padding:14px 16px;border-right:0.5px solid rgba(255,255,255,.04);">
+                    <div style="display:flex;flex-direction:column;gap:0;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:0.5px solid rgba(255,255,255,.04);font-size:12px;">
+                            <span style="color:var(--c-muted);">Paperless</span>
+                            @if (_dto.PaperlessHealth == "ok")
+                            {
+                                <span style="color:#1d9e75;display:flex;align-items:center;gap:3px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:11px;height:11px;"><polyline points="20 6 9 17 4 12"/></svg>Verbunden</span>
+                            }
+                            else
+                            {
+                                <span style="color:#f59e0b;font-size:11px;">⚠ @(_dto.PaperlessHealthMessage ?? "Prüfen")</span>
+                            }
+                        </div>
+                        <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:0.5px solid rgba(255,255,255,.04);font-size:12px;">
+                            <span style="color:var(--c-muted);">Lizenz</span>
+                            <span style="color:@(_dto.ProMode?"#d69a2d":"var(--c-muted)");">@(_dto.ProMode?"Pro":"Community")</span>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;font-size:12px;">
+                            <span style="color:var(--c-muted);">Session</span>
+                            <span>@_dto.ProcessedSinceStart Dok.</span>
+                        </div>
+                    </div>
+                </div>
+                <div style="padding:14px 16px;">
+                    @if (_dto.ResourceHistory.Count > 0)
+                    {
+                        var last = _dto.ResourceHistory.Last();
+                        var cpuC = last.CpuPercent > 80 ? "#ef4444" : last.CpuPercent > 50 ? "#f59e0b" : "var(--c-accent)";
+                        <div style="display:flex;flex-direction:column;gap:0;">
+                            <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:0.5px solid rgba(255,255,255,.04);font-size:12px;">
+                                <span style="color:var(--c-muted);">CPU</span>
+                                <span style="color:@cpuC;">@last.CpuPercent.ToString("F1")%</span>
+                            </div>
+                            <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;font-size:12px;">
+                                <span style="color:var(--c-muted);">RAM</span>
+                                <span>@last.MemoryMb.ToString("F0") MB</span>
+                            </div>
+                        </div>
+                    }
+                    @if (!string.IsNullOrEmpty(_dto.SystemUptime))
+                    {
+                        <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:0.5px solid rgba(255,255,255,.04);font-size:12px;">
+                            <span style="color:var(--c-muted);">Uptime</span>
+                            <span>@_dto.SystemUptime</span>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+
+    }
+
+    <!-- LOG PANEL: slide in from right -->
+    @if (_logPanelOpen)
+    {
+        <div style="position:fixed;top:0;right:0;width:360px;height:100vh;z-index:200;background:var(--c-bg,#0d1520);border-left:0.5px solid var(--c-border);box-shadow:-8px 0 32px rgba(0,0,0,.5);display:flex;flex-direction:column;animation:slideInRight .2s ease;">
+            <div style="padding:12px 16px;border-bottom:0.5px solid var(--c-border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="var(--c-accent)" stroke-width="1.8" style="width:14px;height:14px;"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                    <span style="font-size:12px;font-weight:600;color:var(--c-text);">Live Log</span>
+                    <span style="font-size:10px;color:var(--c-muted);">@_logs.Count Einträge</span>
+                </div>
+                <div style="display:flex;gap:6px;align-items:center;">
+                    <button @onclick="LoadLogs" style="background:none;border:0.5px solid var(--c-border);cursor:pointer;color:var(--c-muted);font-size:11px;padding:2px 7px;border-radius:4px;">↻</button>
+                    <button @onclick='() => { _logs.Clear(); StateHasChanged(); }' style="background:none;border:0.5px solid rgba(239,68,68,.3);cursor:pointer;color:#f87171;font-size:11px;padding:2px 7px;border-radius:4px;">✕</button>
+                    <button @onclick="ToggleLogPanel" style="background:none;border:0.5px solid var(--c-border);cursor:pointer;color:var(--c-muted);font-size:16px;padding:1px 8px;border-radius:4px;line-height:1;">×</button>
+                </div>
+            </div>
+            <div style="flex:1;overflow-y:auto;font-family:'JetBrains Mono',monospace;font-size:11px;">
+                @if (_logs.Count == 0)
+                {
+                    <div style="padding:20px;text-align:center;font-size:12px;color:var(--c-muted);">Keine Log-Einträge.</div>
+                }
+                else
+                {
+                    @foreach (var entry in _logs)
+                    {
+                        var lvlColor = entry.Level switch {
+                            "Error"   => "#ef4444",
+                            "Warning" => "#f59e0b",
+                            "Debug"   => "#6b7280",
+                            _         => "var(--c-muted)"
+                        };
+                        <div style="display:flex;gap:10px;padding:5px 14px;border-bottom:0.5px solid rgba(255,255,255,.03);line-height:1.5;">
+                            <span style="color:#4a7090;flex-shrink:0;width:60px;">@entry.Timestamp.ToLocalTime().ToString("HH:mm:ss")</span>
+                            <span style="color:@lvlColor;flex-shrink:0;width:48px;font-weight:600;">@entry.Level[..Math.Min(4,entry.Level.Length)]</span>
+                            <span style="color:var(--c-text);word-break:break-word;">@entry.Message</span>
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+    }
+
+</div>
+
+@code {
+    private DashboardDto? _dto;
+    private bool _loading = true;
+    private bool _scanning;
+    private bool _restarting;
+    private bool _logPanelOpen;
+
+    // Animated counter values (count up from 0 when data loads)
+    private int _animDocs;
+    private int _animProcessed;
+    private int _animCorrespondents;
+    private int _animTags;
+    private int _animTokens;
+    private bool _countersRunning;
+    private ScanNowResult? _scanResult;
+    private List<LogEntryDto> _logs = new();
+    private string _loadingPhase = "Verbindung zu Paperless wird hergestellt …";
+    private ArchiveAnalysisStatus? _analysisStatus;
+
+    private static readonly string[] DonutColors = ["#6366f1", "#818cf8", "#a5b4fc", "#34d399", "#60a5fa", "#f472b6"];
+
+    private static string LevelBg(string l) => l switch { "Error" or "Critical" => "rgba(220,38,38,0.2)", "Warning" => "rgba(245,158,11,0.2)", _ => "rgba(99,102,241,0.15)" };
+    private static string LevelColor(string l) => l switch { "Error" or "Critical" => "#f87171", "Warning" => "#fbbf24", _ => "#a5b4fc" };
+
+    protected override void OnInitialized()
+    {
+        // Loading state - JS interop not available yet
+        _loading = true;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await LoadAsync(isInitial: true);
+        }
+        else if (!_loading && _dto is not null)
+        {
+            await RenderChartsAsync();
+        }
+    }
+
+    // Reports real progress to the splashscreen — fire and forget, never blocks
+    private void SplashProgress(int pct, string text)
+    {
+        try { _ = JS.InvokeVoidAsync("splashProgress", pct, text); } catch { }
+    }
+
+    private void SplashLog(string text, string level = "")
+    {
+        try { _ = JS.InvokeVoidAsync("splashLog", text, level); } catch { }
+    }
+
+    private void SplashStats(int docs, int correspondents, long tokens)
+    {
+        try { _ = JS.InvokeVoidAsync("splashSetStats", docs, correspondents, tokens); } catch { }
+    }
+
+    private async Task LoadAsync(bool isInitial = false)
+    {
+        // Reset counter state for fresh load
+        _countersRunning = false;
+        _animDocs = 0; _animProcessed = 0; _animCorrespondents = 0;
+        _animTags = 0; _animTokens = 0;
+        _loading = true;
+        StateHasChanged();
+
+        // ── INITIAL LOAD: try preloaded data from splash fetch ──────
+        string? cached = null;
+        if (isInitial)
+        {
+            // Splash still visible = first app start → poll for preloaded data
+            // Splash gone (F5/navigation) → skip polling, go direct to API
+            bool splashVisible = false;
+            try { splashVisible = await JS.InvokeAsync<bool>("isSplashVisible"); } catch { }
+
+            if (splashVisible)
+            {
+                SplashProgress(52, $"paperLeo v{AppInfo.Version} — lese vorgeladene Daten…");
+                SplashLog($"paperLeo v{AppInfo.Version} gestartet", "ok");
+
+                var waitedMs = 0;
+                while (waitedMs < 20000)
+                {
+                    try { cached = await JS.InvokeAsync<string?>("getPaperLeoPreloaded"); } catch { break; }
+                    if (!string.IsNullOrEmpty(cached)) break;
+                    await Task.Delay(300);
+                    waitedMs += 300;
+                    if (waitedMs == 2000)  SplashProgress(55, "Verbindung zu Paperless-ngx wird aufgebaut…");
+                    if (waitedMs == 5000)  SplashProgress(58, "Lade Dokumentenstatistiken…");
+                    if (waitedMs == 10000) SplashProgress(61, "Paperless-ngx antwortet — bitte warten…");
+                    if (waitedMs == 15000) SplashProgress(63, "Große Archive brauchen etwas länger…");
+                }
+            }
+            else
+            {
+                // F5 or navigation: check preload once (may already be ready), then direct API
+                try { cached = await JS.InvokeAsync<string?>("getPaperLeoPreloaded"); } catch { }
+            }
+        }
+        if (!string.IsNullOrEmpty(cached))
+        {
+            // ── SCHRITT 3: Deserialisierung ────────────────────────────
+            SplashProgress(65, "Datensätze werden aufbereitet…");
+
+            var opts = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            var dto = System.Text.Json.JsonSerializer.Deserialize<DashboardDto>(cached, opts);
+
+            if (dto is not null)
+            {
+                _dto = dto;
+
+                // ── SCHRITT 4: Paperless-Version bestätigt ─────────────
+                var plVersion = string.IsNullOrEmpty(dto.PaperlessVersion) ? "–" : dto.PaperlessVersion;
+                var plStatus  = dto.PaperlessHealth == "ok" ? "verbunden" : "Verbindungsfehler";
+                SplashProgress(75, $"Paperless-ngx {plVersion} — {plStatus}");
+                _ = JS.InvokeVoidAsync("splashSetVersions", AppInfo.Version, plVersion).AsTask();
+                SplashLog($"Paperless-ngx {plVersion} verbunden — {dto.TotalDocuments:N0} Dokumente", "ok");
+
+                // ── SCHRITT 5: System-Metriken & KI-Statistiken ────────
+                SplashProgress(85, $"KI-Statistiken: {dto.TotalTokensUsed:N0} Tokens · {dto.TotalDocuments:N0} Dokumente");
+                SplashStats(dto.TotalDocuments, dto.TotalCorrespondents, dto.TotalTokensUsed);
+                SplashLog($"{dto.TotalTokensUsed:N0} Tokens · {dto.TotalTags} Tags · {dto.TotalCorrespondents} Korrespondenten");
+
+                // ── SCHRITT 6: Dashboard rendern ──────────────────────
+                SplashProgress(93, "Dashboard wird initialisiert…");
+                _loading = false;
+                StateHasChanged();
+                _ = StartCountersAsync();
+
+                // ── SCHRITT 7: Fertig → Splash schliessen ─────────────
+                SplashProgress(100, "Bereit.");
+                _ = JS.InvokeVoidAsync("paperLeoSplashReady").AsTask();
+
+                // Sekundäre Daten im Hintergrund nachladen
+                _ = Task.Run(async () => {
+                    try { _analysisStatus = await Api.GetArchiveAnalysisStatusAsync(); }
+                    catch { }
+                    await InvokeAsync(StateHasChanged);
+                });
+                return;
+            }
+        }
+
+        // ── FALLBACK / RELOAD: Direkte API-Calls ─────────────────────
+        if (isInitial) SplashProgress(55, "Verbindung zu paperLeo wird aufgebaut…");
+        _loadingPhase = "Lade Dashboard…";
+        StateHasChanged();
+
+        if (isInitial) SplashProgress(65, "Lade Dokumentenstatistiken…");
+        _dto = await Api.GetDashboardAsync();
+
+        if (_dto is not null && isInitial)
+        {
+            var plVersion = string.IsNullOrEmpty(_dto.PaperlessVersion) ? "–" : _dto.PaperlessVersion;
+            SplashProgress(80, $"Paperless-ngx {plVersion} erkannt");
+            _ = JS.InvokeVoidAsync("splashSetVersions", AppInfo.Version, plVersion).AsTask();
+            SplashProgress(90, $"KI-Statistiken: {_dto.TotalTokensUsed:N0} Tokens · {_dto.TotalDocuments:N0} Dokumente");
+        }
+
+        if (isInitial) SplashProgress(95, "Dashboard wird initialisiert…");
+        _loadingPhase = "";
+        _loading = false;
+        StateHasChanged();
+        _ = StartCountersAsync();
+        StartStatusPolling();
+        StartDtoRefresh();
+
+        if (isInitial)
+        {
+            SplashProgress(100, "Bereit.");
+            _ = JS.InvokeVoidAsync("paperLeoSplashReady").AsTask();
+        }
+
+        try { _analysisStatus = await Api.GetArchiveAnalysisStatusAsync(); } catch { }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LoadLogs()
+    {
+        var (ok, entries) = await Api.GetLogsAsync();
+        if (ok) { _logs = entries; StateHasChanged(); }
+    }
+
+    private Timer? _autoStatusTimer;
+
+    private string? _currentScanDoc;
+    private bool _autoIsScanning;
+
+    private void StartStatusPolling()
+    {
+        _autoStatusTimer?.Dispose();
+        _dtoRefreshTimer?.Dispose();
+        _autoStatusTimer = new Timer(async _ =>
+        {
+            try
+            {
+                // Fast poll: just get current scan doc (lightweight, 1s interval)
+                var (scanning, curDoc) = await Api.GetScanStatusAsync();
+                _autoIsScanning = scanning;
+                if (curDoc is not null) _currentScanDoc = curDoc;
+                else if (!scanning) _currentScanDoc = null;
+                await InvokeAsync(StateHasChanged);
+            }
+            catch { }
+        }, null, 1000, 1000);
+    }
+
+    private Timer? _dtoRefreshTimer;
+
+    private void StartDtoRefresh()
+    {
+        _dtoRefreshTimer?.Dispose();
+        _dtoRefreshTimer = new Timer(async _ =>
+        {
+            try
+            {
+                var live = await Api.GetDashboardAsync();
+                if (live is not null) { _dto = live; await InvokeAsync(StateHasChanged); }
+            }
+            catch { }
+        }, null, 5000, 5000);
+    }
+
+    public void Dispose()
+    {
+        _scanPollCts?.Cancel();
+        _logRefreshTimer?.Dispose();
+        _autoStatusTimer?.Dispose();
+        _dtoRefreshTimer?.Dispose();
+    }
+
+    private async Task RenderChartsAsync()
+    {
+        if (_dto is null) return;
+        try
+        {
+            await JS.InvokeVoidAsync("chartInterop.renderDonut", "processingDonut",
+                new[] { "Verarbeitet", "Offen" },
+                new[] { _dto.ProcessedDocuments, Math.Max(0, _dto.TotalDocuments - _dto.ProcessedDocuments) },
+                new[] { "#6366f1", "rgba(148,163,184,0.15)" });
+
+            if (_dto.DocumentTypeDistribution is { Count: > 0 })
+            {
+                var labels = _dto.DocumentTypeDistribution.Take(5).Select(d => d.Type).ToArray();
+                var values = _dto.DocumentTypeDistribution.Take(5).Select(d => d.Count).ToArray();
+                var colors = labels.Select((_, i) => DonutColors[i % DonutColors.Length]).ToArray();
+                await JS.InvokeVoidAsync("chartInterop.renderDonut", "docTypeDonut", labels, values, colors);
+            }
+        }
+        catch { /* Charts optional */ }
+    }
+
+    private System.Threading.CancellationTokenSource? _scanPollCts;
+
+    private async Task RestartApp()
+    {
+        if (!await ConfirmAsync("App neu starten?\nDie Seite lädt anschließend automatisch neu.")) return;
+        _restarting = true; StateHasChanged();
+        await Api.RestartAppAsync();
+        // Wait for server to go down, then reload
+        await Task.Delay(1500);
+        await JS.InvokeVoidAsync("eval", "setTimeout(() => location.reload(), 2000)");
+    }
+
+    private async Task<bool> ConfirmAsync(string msg)
+    {
+        return await JS.InvokeAsync<bool>("confirm", msg);
+    }
+
+    private async Task ScanNow()
+    {
+        _scanning = true; _scanResult = null; StateHasChanged();
+
+        // Poll dashboard every 2s during scan to show current document name live
+        _scanPollCts = new System.Threading.CancellationTokenSource();
+        var pollToken = _scanPollCts.Token;
+        _ = Task.Run(async () =>
+        {
+            while (!pollToken.IsCancellationRequested)
+            {
+                try
+                {
+                    await Task.Delay(2000, pollToken);
+                    var live = await Api.GetDashboardAsync();
+                    if (live is not null)
+                    {
+                        _dto = live;
+                        await InvokeAsync(StateHasChanged);
+                    }
+                }
+                catch { break; }
+            }
+        }, pollToken);
+
+        _scanResult = await Api.ScanNowAsync();
+        _scanPollCts.Cancel();
+
+        await LoadAsync(isInitial: false);
+        await RenderChartsAsync();
+        _scanning = false;
+        StateHasChanged();
+    }
+
+    private async Task StartCountersAsync()
+    {
+        if (_dto is null || _countersRunning) return;
+        _countersRunning = true;
+
+        var targets = new[]
+        {
+            (_dto.TotalDocuments,     (Action<int>)(v => _animDocs          = v)),
+            (_dto.ProcessedDocuments, (Action<int>)(v => _animProcessed     = v)),
+            (_dto.TotalCorrespondents,(Action<int>)(v => _animCorrespondents = v)),
+            (_dto.TotalTags,          (Action<int>)(v => _animTags           = v)),
+        };
+
+        // Run all counters in parallel
+        var tasks = targets.Select(async t =>
+        {
+            var (target, setter) = t;
+            if (target <= 0) { setter(0); return; }
+            var steps = Math.Min(target, 40); // max 40 animation steps
+            var delay = Math.Max(12, 500 / steps); // total ~500ms
+            for (var i = 1; i <= steps; i++)
+            {
+                // Ease-out: faster at start, slower at end
+                var pct = 1.0 - Math.Pow(1.0 - (double)i / steps, 3);
+                setter((int)(target * pct));
+                await InvokeAsync(StateHasChanged);
+                await Task.Delay(delay);
+            }
+            setter(target); // ensure exact final value
+        });
+        await Task.WhenAll(tasks);
+
+        // Token counter (can be large — count up separately)
+        if (_dto.TotalTokensUsed > 0)
+        {
+            var tokenTarget = (int)Math.Min(_dto.TotalTokensUsed, int.MaxValue);
+            var tokenSteps = 50;
+            for (var i = 1; i <= tokenSteps; i++)
+            {
+                var pct = 1.0 - Math.Pow(1.0 - (double)i / tokenSteps, 2);
+                _animTokens = (int)(tokenTarget * pct);
+                await InvokeAsync(StateHasChanged);
+                await Task.Delay(10);
+            }
+            _animTokens = tokenTarget;
+        }
+
+        await InvokeAsync(StateHasChanged);
+        _countersRunning = false;
+    }
+
+    private Timer? _logRefreshTimer;
+
+    private async Task ToggleLogPanel()
+    {
+        _logPanelOpen = !_logPanelOpen;
+        StateHasChanged();
+        if (_logPanelOpen)
+        {
+            await LoadLogs();
+            StateHasChanged();
+            // Auto-refresh log every 3s while open
+            _logRefreshTimer = new Timer(async _ =>
+            {
+                if (!_logPanelOpen) { _logRefreshTimer?.Dispose(); return; }
+                await LoadLogs();
+            }, null, 3000, 3000);
+        }
+        else
+        {
+            _logRefreshTimer?.Dispose();
+            _logRefreshTimer = null;
+        }
+    }
+}
+            <!-- Progress Bar: only when scanning -->
+            @if (_scanning || _autoIsScanning || (_dto?.IsScanning == true))
+            {
+                var curDoc = _currentScanDoc ?? _dto?.CurrentScanDocument;
+                <div style="background:var(--c-surface);border:0.5px solid rgba(29,158,117,.3);border-radius:12px;padding:10px 14px;">
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+                        <div class="pl-progress-spinner" style="width:13px;height:13px;border-width:2px;margin:0;flex-shrink:0;"></div>
+                        <span style="font-size:12px;color:var(--c-text);font-weight:600;">@Loc["dash.scanning"]</span>
+                        @if (!string.IsNullOrEmpty(curDoc))
+                        {
+                            <span style="font-size:11px;color:var(--c-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">— @curDoc</span>
+                        }
+                    </div>
+                    <div class="pl-progress-track"><div class="pl-progress-fill-indeterminate"></div></div>
+                </div>
+            }
+

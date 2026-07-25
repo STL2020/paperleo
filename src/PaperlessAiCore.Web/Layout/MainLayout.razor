@@ -1,0 +1,450 @@
+@using PaperlessAiCore.Shared
+@using PaperlessAiCore.Web.Services
+@inherits LayoutComponentBase
+@inject IJSRuntime JS
+@inject ApiClient Api
+@inject NavigationManager Nav
+@inject AppLocService Loc
+@implements IDisposable
+
+<div class="pl-shell @(_isDark ? "dark" : "light") @(_navCollapsed ? "nav-collapsed" : "")">
+
+    <!-- TOP BAR -->
+    <header class="pl-topbar">
+        <div class="pl-topbar-left">
+            <button class="pl-nav-toggle" @onclick="ToggleNav" title="Navigation ein-/ausklappen">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;" aria-hidden="true">
+                    @if (_navCollapsed)
+                    {
+                        <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
+                    }
+                    else
+                    {
+                        <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="15" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
+                    }
+                </svg>
+            </button>
+            <a href="/" class="pl-brand">
+                @if (_isDark)
+                {
+                    <img src="img/logo-paperleo-dark.svg" alt="paperLeo" class="pl-brand-logo-full" style="height:24px;" />
+                }
+                else
+                {
+                    <img src="img/logo-paperleo-light.svg" alt="paperLeo" class="pl-brand-logo-full" style="height:24px;" />
+                }
+                <span class="pl-brand-name-text">Paper<span class="pl-brand-accent">Leo</span></span>
+            </a>
+        </div>
+        <div class="pl-topbar-right">
+            <button @onclick="ToggleLang" title="Language / Sprache" class="pl-lang-btn">
+                @(AppLoc.Current == "de" ? "DE" : "EN")
+            </button>
+            @if (_saveStatus is not null)
+            {
+                <span class="pl-save-status">
+                    @if (_saveStatus == "saving")
+                    {
+                        <span class="pl-spin"></span>
+                        <span>@Loc["header.saving"]</span>
+                    }
+                    else
+                    {
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:12px;height:12px;"><polyline points="20 6 9 17 4 12"/></svg>
+                        <span>@Loc["header.saved"]</span>
+                    }
+                </span>
+            }
+            <span class="pl-status-dot @(_apiOnline ? "on" : "off")" title="@Loc["status.connected"]"></span>
+            <button class="pl-license @(_proMode ? "pro" : "demo")" @onclick='() => GoToTab("Lizenz")'>@(_proMode ? Loc["header.pro"] : Loc["header.demo"])</button>
+            <button class="pl-theme-btn" @onclick="ToggleTheme" aria-label="Toggle theme">
+                @if (_isDark)
+                {
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:14px;height:14px;" aria-hidden="true"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+                }
+                else
+                {
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:14px;height:14px;" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+                }
+            </button>
+        </div>
+    </header>
+
+    <!-- BODY -->
+    <div class="pl-body">
+
+        <!-- SIDEBAR -->
+        <nav class="pl-sidebar">
+
+            <!-- Logo collapsed -->
+            <div class="pl-sidebar-logo">
+                <img src="img/logo-paperleo-icon.svg" alt="paperLeo" style="width:28px;height:28px;" />
+            </div>
+
+            <!-- ── DASHBOARD ────────────────────── -->
+            <a href="/" class="pl-ni @(IsPage("") ? "active" : "")">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+                <span class="pl-ni-label">@Loc["nav.dashboard"]</span>
+            </a>
+
+            <!-- ── EINSTELLUNGEN ───────────────── -->
+            <div class="pl-acc @(_grpSettings ? "open" : "")">
+                <button class="pl-acc-head" @onclick='() => _grpSettings = !_grpSettings'>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
+                    <span class="pl-ni-label">@Loc["nav.settings"]</span>
+                    <svg class="pl-acc-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+                <div class="pl-acc-body">
+                    <button class="pl-ni pl-ni-sub @TabActive("Verbindung & KI")" @onclick='() => GoToTab("Verbindung & KI")'>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
+                        <span class="pl-ni-label">@Loc["nav.connection"]</span>
+                    </button>
+                    <button class="pl-ni pl-ni-sub @TabActive("Verhalten")" @onclick='() => GoToTab("Verhalten")'>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+                        <span class="pl-ni-label">@Loc["nav.behavior"]</span>
+                    </button>
+                    <button class="pl-ni pl-ni-sub @TabActive("Vokabular")" @onclick='() => GoToTab("Vokabular")'>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/></svg>
+                        <span class="pl-ni-label">@Loc["nav.vocabulary"]</span>
+                    </button>
+                    <button class="pl-ni pl-ni-sub @TabActive("Prompt-Assistent")" @onclick='() => GoToTab("Prompt-Assistent")'>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                        <span class="pl-ni-label">@Loc["nav.assistant"]</span>
+                    </button>
+
+                </div>
+            </div>
+
+            <!-- ── ANALYSE ─────────────────────── -->
+            <div class="pl-acc @(_grpAnalyse ? "open" : "")">
+                <button class="pl-acc-head" @onclick='() => _grpAnalyse = !_grpAnalyse'>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                    <span class="pl-ni-label">@Loc["nav.analysis"]</span>
+                    <svg class="pl-acc-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+                <div class="pl-acc-body">
+                    <a href="/archive-analysis" class="pl-ni pl-ni-sub @(IsPage("archive-analysis") ? "active" : "")">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                        <span class="pl-ni-label">@Loc["nav.archive"]</span>
+                    </a>
+                    @* Korrespondenten-Seite — vorerst deaktiviert (in Entwicklung) *@
+                    @*
+                    <a href="/correspondents" class="pl-ni pl-ni-sub @(IsPage("correspondents") ? "active" : "")">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                        <span class="pl-ni-label">Korrespondenten</span>
+                    </a>
+                    *@
+                    <button class="pl-ni pl-ni-sub @TabActive("Dokument testen")" @onclick='() => GoToTab("Dokument testen")'>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                        <span class="pl-ni-label">@Loc["nav.test"]</span>
+                    </button>
+                    <a href="/jobs" class="pl-ni pl-ni-sub @(IsPage("jobs") ? "active" : "")">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+                        <span class="pl-ni-label">@Loc["nav.jobs"]</span>
+                    </a>
+                </div>
+            </div>
+
+            <!-- ── BACKUP ──────────────────────── -->
+            <div class="pl-acc @(_grpBackup ? "open" : "")">
+                <button class="pl-acc-head" @onclick='() => _grpBackup = !_grpBackup'>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    <span class="pl-ni-label">Backup</span>
+                    <svg class="pl-acc-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+                <div class="pl-acc-body">
+
+                    <a href="/paperless-backup" class="pl-ni pl-ni-sub @(IsPage("paperless-backup") ? "active" : "")">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/></svg>
+                        <span class="pl-ni-label">@Loc["nav.plbackup"]</span>
+                    </a>
+                    <button class="pl-ni pl-ni-sub @TabActive("Löschaktionen")" @onclick='() => GoToTab("Löschaktionen")'>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                        <span class="pl-ni-label">@Loc["nav.batch"]</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- ── INFO ───────────────────────── -->
+            <div class="pl-acc @(_grpInfo ? "open" : "")">
+                <button class="pl-acc-head" @onclick='() => _grpInfo = !_grpInfo'>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                    <span class="pl-ni-label">@Loc["nav.info"]</span>
+                    <svg class="pl-acc-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+                <div class="pl-acc-body">
+                    <button class="pl-ni pl-ni-sub @TabActive("Lizenz")" @onclick='() => GoToTab("Lizenz")'>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+                        <span class="pl-ni-label">@Loc["nav.license"]</span>
+                    </button>
+                    <button class="pl-ni pl-ni-sub @TabActive("Hilfe")" @onclick='() => GoToTab("Hilfe")'>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                        <span class="pl-ni-label">@Loc["nav.help"]</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Status -->
+            <div class="pl-sidebar-footer">
+                <span class="pl-status-dot @(_apiOnline ? "on" : "off")" style="flex-shrink:0"></span>
+                <span class="pl-ni-label" style="font-size:10px;color:var(--c-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                    @(_apiOnline ? "Verbunden" : "Offline")
+                </span>
+            </div>
+        </nav>
+
+        <!-- MAIN CONTENT -->
+        <main class="pl-content">
+            @Body
+        </main>
+    </div>
+</div>
+
+
+<style>
+/* ── SHELL ───────────────────────────────────────────────── */
+.pl-shell { display:flex; flex-direction:column; height:100vh; overflow:hidden; background:var(--c-bg); color:var(--c-text); transition:background .3s,color .3s; }
+
+/* ── TOPBAR ──────────────────────────────────────────────── */
+.pl-topbar { height:48px; display:flex; align-items:center; justify-content:space-between; padding:0 16px 0 8px; border-bottom:1px solid var(--c-border); background:var(--c-surface); flex-shrink:0; gap:8px; }
+.pl-topbar-left { display:flex; align-items:center; gap:8px; min-width:0; }
+.pl-topbar-right { display:flex; align-items:center; gap:8px; flex-shrink:0; }
+.pl-nav-toggle { background:none; border:none; color:var(--c-muted); cursor:pointer; padding:6px; border-radius:6px; display:flex; align-items:center; transition:background .15s; }
+.pl-nav-toggle:hover { background:rgba(128,128,128,.08); }
+.pl-brand { display:flex; align-items:center; gap:8px; text-decoration:none; }
+.pl-brand-logo-full { height:24px; display:block; transition:opacity .2s; }
+.pl-brand-name-text { font-size:15px; font-weight:700; color:var(--c-text); display:none; } /* fallback */
+.pl-brand-accent { color:var(--c-accent); }
+.pl-lang-btn { background:rgba(128,128,128,.06); border:1px solid var(--c-border); border-radius:6px; padding:3px 8px; font-size:11px; font-weight:600; color:var(--c-muted); cursor:pointer; letter-spacing:.04em; }
+.pl-save-status { font-size:11px; color:var(--c-accent); display:flex; align-items:center; gap:4px; }
+.pl-spin { width:10px; height:10px; border:1.5px solid var(--c-muted); border-top-color:transparent; border-radius:50%; display:inline-block; animation:spin .6s linear infinite; }
+.pl-status-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+.pl-status-dot.on { background:#1d9e75; box-shadow:0 0 5px rgba(29,158,117,.5); }
+.pl-status-dot.off { background:var(--c-border); }
+.pl-theme-btn { background:none; border:none; color:var(--c-muted); cursor:pointer; padding:4px; display:flex; align-items:center; border-radius:5px; transition:color .15s; }
+.pl-theme-btn:hover { color:var(--c-text); }
+.pl-license { font-size:10px; font-weight:700; padding:2px 8px; border-radius:4px; letter-spacing:.06em; cursor:pointer; }
+.pl-license.pro { background:linear-gradient(135deg,rgba(29,158,117,.2),rgba(48,143,209,.2)); color:var(--c-accent); border:1px solid rgba(29,158,117,.3); }
+.pl-license.demo { background:rgba(128,128,128,.08); color:var(--c-muted); border:1px solid var(--c-border); }
+
+/* ── BODY ────────────────────────────────────────────────── */
+.pl-body { display:flex; flex:1; min-height:0; overflow:hidden; }
+
+/* ── SIDEBAR ─────────────────────────────────────────────── */
+.pl-sidebar {
+    width:220px;
+    flex-shrink:0;
+    display:flex;
+    flex-direction:column;
+    background:var(--c-bg);
+    border-right:1px solid var(--c-border);
+    overflow-y:auto;
+    overflow-x:hidden;
+    transition:width .2s ease;
+    position:relative;
+}
+.pl-sidebar::before {
+    content:'';
+    position:absolute;
+    top:0; left:0; right:0;
+    height:200px;
+    background:radial-gradient(ellipse at 20% 0%,rgba(29,158,117,.08) 0%,transparent 60%),
+               radial-gradient(ellipse at 85% 10%,rgba(48,143,209,.06) 0%,transparent 55%);
+    pointer-events:none;
+    z-index:0;
+}
+.pl-sidebar > * { position:relative; z-index:1; }
+.pl-sidebar-logo { display:none; justify-content:center; padding:14px 0 8px; }
+.pl-sidebar-footer { display:flex; align-items:center; gap:8px; padding:10px 14px; border-top:1px solid var(--c-border); margin-top:auto; overflow:hidden; }
+
+/* Collapsed state */
+.nav-collapsed .pl-sidebar { width:52px; }
+.nav-collapsed .pl-ni-label { opacity:0; width:0; overflow:hidden; }
+.nav-collapsed .pl-acc-arrow { display:none; }
+.nav-collapsed .pl-acc-body { display:none !important; }
+.nav-collapsed .pl-sidebar-logo { display:flex; }
+.nav-collapsed .pl-brand-logo-full { display:none; }
+
+/* ── NAV ITEMS ───────────────────────────────────────────── */
+.pl-ni {
+    display:flex;
+    align-items:center;
+    gap:10px;
+    padding:8px 14px;
+    font-size:13px;
+    color:var(--c-muted);
+    cursor:pointer;
+    border:none;
+    background:none;
+    width:100%;
+    text-align:left;
+    border-radius:7px;
+    margin:1px 6px;
+    width:calc(100% - 12px);
+    transition:all .15s;
+    text-decoration:none;
+    white-space:nowrap;
+    overflow:hidden;
+}
+.pl-ni:hover { background:rgba(128,128,128,.08); color:var(--c-text); }
+.pl-ni.active, .pl-ni.active:hover {
+    background:linear-gradient(90deg,rgba(29,158,117,.18),rgba(48,143,209,.06));
+    color:#4de3a8;
+    border-left:2px solid #1d9e75;
+    padding-left:12px;
+}
+.pl-ni svg { width:15px; height:15px; flex-shrink:0; opacity:.65; }
+.pl-ni.active svg { opacity:1; }
+.pl-ni-sub { padding:6px 12px; font-size:12px; }
+.pl-ni-label { transition:opacity .15s, width .2s; white-space:nowrap; }
+
+/* ── ACCORDION ───────────────────────────────────────────── */
+.pl-acc { display:flex; flex-direction:column; }
+.pl-acc-head {
+    display:flex;
+    align-items:center;
+    gap:9px;
+    padding:8px 14px;
+    font-size:11px;
+    font-weight:600;
+    color:var(--c-muted);
+    letter-spacing:.07em;
+    text-transform:uppercase;
+    cursor:pointer;
+    border:none;
+    background:none;
+    width:100%;
+    text-align:left;
+    margin-top:6px;
+    transition:color .15s;
+    white-space:nowrap;
+    overflow:hidden;
+}
+.pl-acc-head:hover { color:var(--c-text); }
+.pl-acc-head svg:first-child { width:14px; height:14px; flex-shrink:0; opacity:.5; }
+.pl-acc-arrow { width:12px !important; height:12px !important; margin-left:auto; transition:transform .2s; opacity:.4; }
+.pl-acc.open .pl-acc-arrow { transform:rotate(180deg); }
+.pl-acc-body { display:none; flex-direction:column; }
+.pl-acc.open .pl-acc-body { display:flex; }
+
+/* ── CONTENT ─────────────────────────────────────────────── */
+.pl-content { flex:1; overflow-y:auto; min-width:0; }
+
+/* ── UTILS ───────────────────────────────────────────────── */
+@@keyframes spin { to { transform:rotate(360deg); } }
+@@keyframes indeterminate { 0% { transform:translateX(-100%); } 100% { transform:translateX(400%); } }
+
+/* ── THEME VARS ──────────────────────────────────────────── */
+.dark  { --c-bg:#0f171e; --c-surface:#18232c; --c-border:#283845; --c-text:#f0f4f8; --c-muted:#9cb1c2; --c-accent:#1d9e75; }
+.light { --c-bg:#f4f7fa; --c-surface:#ffffff; --c-border:#dde8ef; --c-text:#1a2b38; --c-muted:#5a7a8a; --c-accent:#1d9e75; }
+
+/* ── LOADING SPINNER ─────────────────────────────────────── */
+.loading-spinner { border:2.5px solid var(--c-border); border-top-color:var(--c-accent); border-radius:50%; animation:spin .7s linear infinite; display:inline-block; flex-shrink:0; }
+
+/* ── SHARED COMPONENT STYLES ─────────────────────────────── */
+.btn { display:inline-flex; align-items:center; gap:6px; padding:9px 18px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; border:none; transition:opacity .15s,transform .1s; }
+.btn:hover { opacity:.9; transform:translateY(-1px); }
+.btn:disabled { opacity:.5; cursor:not-allowed; transform:none; }
+.btn.secondary { background:rgba(128,128,128,.08); border:1px solid var(--c-border); color:var(--c-text); }
+.btn.secondary:hover { background:rgba(128,128,128,.12); }
+.badge { font-size:11px; font-weight:600; padding:3px 9px; border-radius:5px; display:inline-flex; align-items:center; gap:4px; }
+.badge.ok { background:rgba(29,158,117,.12); color:#1d9e75; border:1px solid rgba(29,158,117,.2); }
+.badge.error { background:rgba(239,68,68,.1); color:#ef4444; border:1px solid rgba(239,68,68,.2); }
+.sfield { display:flex; flex-direction:column; gap:5px; margin-bottom:14px; }
+.sfield label { font-size:11px; font-weight:600; color:var(--c-muted); letter-spacing:.05em; text-transform:uppercase; }
+.sfield input, .sfield select, .sfield textarea { background:rgba(128,128,128,.06); border:1px solid var(--c-border); border-radius:8px; padding:9px 13px; font-size:13px; color:var(--c-text); outline:none; width:100%; font-family:inherit; transition:border-color .15s; }
+.sfield input:focus, .sfield select:focus, .sfield textarea:focus { border-color:var(--c-accent); }
+</style>
+
+@code {
+    private bool _isDark = true;
+    private bool _proMode;
+    private bool _apiOnline;
+    private string? _saveStatus;
+    private int _build;
+    private bool _navCollapsed;
+    private bool _grpSettings = true;
+    private bool _grpAnalyse = false;
+    private bool _grpBackup = false;
+    private bool _grpInfo = false;
+
+    protected override void OnInitialized()
+    {
+        SettingsTabState.OnChanged += OnTabChanged;
+        SettingsTabState.OnSaveStatusChanged += OnSaveStatusChanged;
+    }
+
+    // Theme is read in OnAfterRenderAsync - _isDark defaults to true (dark mode)
+    // theme.js already applied the class to <html> before Blazor loaded
+
+    private void OnTabChanged() => InvokeAsync(StateHasChanged);
+    private void OnSaveStatusChanged() { _saveStatus = SettingsTabState.SaveStatus; InvokeAsync(StateHasChanged); }
+
+    private async void ToggleLang()
+    {
+        AppLoc.Set(AppLoc.Current == "de" ? "en" : "de");
+        await JS.InvokeVoidAsync("sessionStorage.setItem", "paperleo_lang", AppLoc.Current);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        SettingsTabState.OnChanged -= OnTabChanged;
+        SettingsTabState.OnSaveStatusChanged -= OnSaveStatusChanged;
+    }
+
+    // Prüft ob eine Route aktiv ist (nur für href-Links)
+    private bool IsPage(string path)
+    {
+        var cur = Nav.ToBaseRelativePath(Nav.Uri).Trim('/');
+        return path == "" ? cur == "" : cur.StartsWith(path, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // Prüft ob ein Settings-Tab aktiv ist
+    private string TabActive(string tab)
+    {
+        if (!IsPage("settings")) return "";
+        return SettingsTabState.ActiveTab == tab ? "active" : "";
+    }
+
+    // Navigiert zu Settings und setzt den Tab
+    private void GoToTab(string tab)
+    {
+        SettingsTabState.Set(tab);
+        if (!IsPage("settings"))
+            Nav.NavigateTo("/settings");
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        try { _isDark = await JS.InvokeAsync<bool>("themeInterop.isDark"); }
+        catch { _isDark = true; }
+        // Restore language preference
+        try
+        {
+            var lang = await JS.InvokeAsync<string?>("sessionStorage.getItem", "paperleo_lang");
+            if (!string.IsNullOrEmpty(lang)) AppLoc.Set(lang);
+        }
+        catch { }
+        try
+        {
+            var s = await Api.GetStatusAsync();
+            _proMode = s.ProMode;
+            _apiOnline = true;
+            _build = s.BuildNumber;
+        }
+        catch { _apiOnline = false; }
+        StateHasChanged();
+    }
+
+    private async Task ToggleTheme()
+    {
+        try { _isDark = await JS.InvokeAsync<bool>("themeInterop.toggle"); }
+        catch { _isDark = !_isDark; }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void ShowHelp() => GoToTab("Hilfe");
+    private void ToggleNav() { _navCollapsed = !_navCollapsed; }
+}

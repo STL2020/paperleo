@@ -1,0 +1,21 @@
+# ============================================================================
+# Standalone Self-Hosted Betrieb: ein Container, Konfiguration als lesbare
+# .env-Datei im data-Volume (kein Datenbank-Server nötig).
+#   docker compose up --build
+#   -> http://localhost:8080  (Setup-Wizard führt durch die Erstkonfiguration)
+# ============================================================================
+services:
+  app:
+    build:
+      context: .
+      dockerfile: src/PaperlessAiCore.Api/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+    volumes:
+      - paperlessai_data:/app/data
+    restart: unless-stopped
+
+volumes:
+  paperlessai_data:
